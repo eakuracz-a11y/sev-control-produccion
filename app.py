@@ -24,7 +24,7 @@ import streamlit as st
 # CONFIGURACIÓN
 # ============================================================
 
-APP_VERSION = "V1.2"
+APP_VERSION = "V1.4"
 APP_TITLE = "SEV | Control de Producción"
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -68,6 +68,104 @@ SEV_PERSONAS = [
 ]
 
 DEFAULT_SHELF_LIFE_MONTHS = 24
+
+# Consumibles/embalajes cargados desde listado SIGA/MATA225 del 10/09/2026.
+DEFAULT_CONSUMABLES = [
+    ("EM0001", 'BOMBANA BXS10/63 550G BRANCA (PALETIZADA)', "01", "Embalaje", '-500,0000'),
+    ("EM0003", 'BOMBANA BXS20G3/63 1100G BRANCA PALETIZADA', "01", "Embalaje", '-50,0000'),
+    ("EM0005", 'TAMPA 63MM C/ SELO DE ALUMINIO VENTILADO SIMPLES (GD)', "01", "Embalaje", '-550,0000'),
+    ("EM0007", 'CONTEINER IBC 1000 LITROS', "01", "Embalaje", '-1,4480'),
+    ("MC0001", 'GRAMA ESMERALDA METRO', "01", "Consumible", '0,0000'),
+    ("MC0002", 'VERGALHAO CA-60 5.0 X 12MT', "01", "Consumible", '0,0000'),
+    ("MC0019", 'DIESEL S500 COMUM', "03", "Consumible", '0,0000'),
+    ("MC0021", 'GASOLINA COMUM', "03", "Consumible", '0,0000'),
+    ("MC0043", 'DISCO DE CORTE', "03", "Consumible", '0,0000'),
+    ("MC0046", 'FILME STRECH TRANSPARENTE', "03", "Consumible", '0,0000'),
+    ("MC0056", 'AGUA MINERAL S/GAS', "03", "Consumible", '0,0000'),
+    ("MC0060", 'BOLETIM', "01", "Consumible", '0,0000'),
+    ("MC0060", 'BOLETIM', "03", "Consumible", '0,0000'),
+    ("MC0070", 'DIESEL S10', "03", "Consumible", '0,0000'),
+    ("MC0071", 'MANUTENCAO PREDIAL E INSTALACOES', "03", "Consumible", '0,0000'),
+    ("MC0086", 'ARRUELA LISA', "03", "Consumible", '0,0000'),
+    ("MC0087", 'PARAFUSO', "03", "Consumible", '0,0000'),
+    ("MC0089", 'AGUA MINERAL C/GAS', "01", "Consumible", '0,0000'),
+    ("MC0089", 'AGUA MINERAL C/GAS', "03", "Consumible", '0,0000'),
+    ("MC0094", 'MICROONDAS', "01", "Consumible", '0,0000'),
+    ("MC0094", 'MICROONDAS', "03", "Consumible", '0,0000'),
+    ("MC0095", 'CURVA INOX', "03", "Consumible", '0,0000'),
+    ("MC0096", 'PONTA ROSCADA INOX', "03", "Consumible", '0,0000'),
+    ("MC0097", 'CANALETA  ADESIVA', "03", "Consumible", '0,0000'),
+    ("MC0098", 'CABO FLEX', "03", "Consumible", '0,0000'),
+    ("MC0099", 'METALON', "03", "Consumible", '0,0000'),
+    ("MC0100", 'RODIZIO PRETO GIRATORIO', "03", "Consumible", '0,0000'),
+    ("MC0101", 'LICENCIAMENTO DE E-MAIL', "03", "Consumible", '0,0000'),
+    ("MC0102", 'ARGONIO', "03", "Consumible", '0,0000'),
+    ("MC0103", 'BROCA', "03", "Consumible", '0,0000'),
+    ("MC0104", 'ESCOVA CIRCULAR TRANCADA', "03", "Consumible", '0,0000'),
+    ("MC0105", 'DISCO FLAP', "03", "Consumible", '0,0000'),
+    ("MC0106", 'VARETA', "03", "Consumible", '0,0000'),
+    ("MC0107", 'BARRA ROSCADA', "03", "Consumible", '0,0000'),
+    ("MC0108", 'PORCA', "03", "Consumible", '0,0000'),
+    ("MC0109", 'ELETRODO PH SENSOGLASS', "03", "Consumible", '0,0000'),
+    ("MC0110", 'COPO PLASTICO PARA ANALISE DE SOLO', "03", "Consumible", '0,0000'),
+    ("MC0111", 'TAMPA PARA COPO DE SOLO', "03", "Consumible", '0,0000'),
+    ("MC0112", 'CARBONATO DE SODIO', "03", "Consumible", '0,0000'),
+    ("MC0113", 'PANO MULTIUSO', "03", "Consumible", '0,0000'),
+    ("MC0114", 'COLUNA DEIONIZADORA', "03", "Consumible", '0,0000'),
+    ("MC0115", 'PRONTUARIO', "03", "Consumible", '0,0000'),
+    ("MC0116", 'CAPA TOPFUSION', "03", "Consumible", '0,0000'),
+    ("MC0117", 'TE REDUCAO TOPFUSION', "03", "Consumible", '0,0000'),
+    ("MC0118", 'JOELHO TOPFUSION', "03", "Consumible", '0,0000'),
+    ("MC0119", 'CONEXAO RETA MACHO', "03", "Consumible", '0,0000'),
+    ("MC0120", 'SUPORTE DESLIZANTE', "03", "Consumible", '0,0000'),
+    ("MC0121", 'LUVA', "03", "Consumible", '0,0000'),
+    ("MC0122", 'TUBO', "03", "Consumible", '0,0000'),
+    ("MC0123", 'CONEXAO COTOVELO', "03", "Consumible", '0,0000'),
+    ("MC0124", 'MANGUEIRA', "03", "Consumible", '0,0000'),
+    ("MC0125", 'REGISTRO ESFERA', "03", "Consumible", '0,0000'),
+    ("MC0126", 'BUCHA', "03", "Consumible", '0,0000'),
+    ("MC0127", 'ABRACADEIRA', "03", "Consumible", '0,0000'),
+    ("MC0128", 'PERFIL LAMINADO', "03", "Consumible", '0,0000'),
+    ("MC0129", 'CHAPA', "03", "Consumible", '0,0000'),
+    ("MC0130", 'ELETRODO', "03", "Consumible", '0,0000'),
+    ("MC0131", 'PERFIL', "03", "Consumible", '0,0000'),
+    ("MC0132", 'CURVA  ACO', "03", "Consumible", '0,0000'),
+    ("MC0133", 'MANOMETRO', "03", "Consumible", '0,0000'),
+    ("MC0134", 'TUBO SIFAO', "03", "Consumible", '0,0000'),
+    ("MC0135", 'CAFE', "03", "Consumible", '0,0000'),
+    ("MC0137", 'DETERGENTE', "03", "Consumible", '0,0000'),
+    ("MC0138", 'FILTRO DE PAPEL', "03", "Consumible", '0,0000'),
+    ("MC0139", 'CANTONEIRA', "03", "Consumible", '0,0000'),
+    ("MC0141", 'TINTA SINTETICA', "03", "Consumible", '0,0000'),
+    ("MC0142", 'PRIMER', "03", "Consumible", '0,0000'),
+    ("MC0143", 'THINER', "03", "Consumible", '0,0000'),
+    ("MC0144", 'JUNTA LIQUIDA', "03", "Consumible", '0,0000'),
+    ("MC0145", 'BALANCA ELETRONICA', "03", "Consumible", '1,0000'),
+    ("MC0146", 'LUBRAX ESSENCIAL', "03", "Consumible", '0,0000'),
+    ("MC0147", 'JALECO', "03", "Consumible", '0,0000'),
+    ("MC0148", 'FECHADURA SOLENOIDE', "03", "Consumible", '0,0000'),
+    ("MC0149", 'BOTOEIRA INOX', "03", "Consumible", '0,0000'),
+    ("MC0150", 'CONTROLE ACESSO FACIAL', "03", "Consumible", '0,0000'),
+    ("MC0151", 'FONTE AUXILIAR', "03", "Consumible", '0,0000'),
+    ("MC0152", 'BATERIA', "03", "Consumible", '0,0000'),
+    ("MC0153", 'CABO ENERGIA PARALELO', "03", "Consumible", '0,0000'),
+    ("MC0154", 'CABO HOMOLOGADO', "03", "Consumible", '0,0000'),
+    ("MC0155", 'CAIXA DE PASSAGEM', "03", "Consumible", '0,0000'),
+    ("MC0156", 'BOLSA 5L ESPECIAL', "03", "Consumible", '0,0000'),
+    ("MC0157", 'SERINGA 20ML COM AGULHA', "03", "Consumible", '0,0000'),
+    ("MC0158", 'CONECTOR MACHO', "03", "Consumible", '0,0000'),
+    ("MC0159", 'COPO TERMICO', "03", "Consumible", '0,0000'),
+    ("MC0160", 'COPO CAFE/CHA', "03", "Consumible", '0,0000'),
+    ("MC0161", 'COPO DE PAPEL KRAFT ECO', "03", "Consumible", '0,0000'),
+    ("MC0162", 'MANGUEIRA SUCCAO', "03", "Consumible", '0,0000'),
+    ("MC0163", 'CAPA P/ CONEXAO', "03", "Consumible", '0,0000'),
+    ("MC0164", 'UNIAO RED', "03", "Consumible", '0,0000'),
+    ("MC0173", 'PISTOLA', "03", "Consumible", '0,0000'),
+    ("MC0174", 'ANEL DE PLATINA PARA TENSIOMETRO DST30', "03", "Consumible", '0,0000'),
+    ("MC0175", 'TENSIOMETRO ANALISADR DE TENSAO SUPERFICIAL DST30', "03", "Consumible", '0,0000'),
+    ("MC0176", 'TUBO ELET PVC', "03", "Consumible", '0,0000'),
+    ("MC0177", 'GLP P20', "03", "Consumible", '0,0000'),
+]
 
 ESTADOS = [
     "Planificada",
@@ -323,6 +421,103 @@ def init_db():
         """
     )
 
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS materias_primas (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            codigo TEXT UNIQUE NOT NULL,
+            nombre TEXT NOT NULL,
+            unidad TEXT NOT NULL DEFAULT 'kg',
+            activo INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS formulaciones (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            producto_id INTEGER NOT NULL,
+            version INTEGER NOT NULL DEFAULT 1,
+            cantidad_base REAL NOT NULL DEFAULT 100,
+            unidad_base TEXT NOT NULL DEFAULT 'L',
+            observaciones TEXT,
+            activa INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL,
+            UNIQUE(producto_id, version),
+            FOREIGN KEY (producto_id) REFERENCES productos(id)
+        )
+        """
+    )
+
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS formulacion_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            formulacion_id INTEGER NOT NULL,
+            materia_prima_id INTEGER NOT NULL,
+            cantidad REAL NOT NULL,
+            unidad TEXT NOT NULL,
+            observacion TEXT,
+            FOREIGN KEY (formulacion_id) REFERENCES formulaciones(id),
+            FOREIGN KEY (materia_prima_id) REFERENCES materias_primas(id)
+        )
+        """
+    )
+
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS consumibles (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            codigo TEXT NOT NULL,
+            descripcion TEXT NOT NULL,
+            armazem TEXT,
+            categoria TEXT NOT NULL DEFAULT 'Consumible',
+            saldo_referencia TEXT,
+            activo INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL,
+            UNIQUE(codigo, armazem)
+        )
+        """
+    )
+
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS consumos_consumibles (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            orden_id INTEGER NOT NULL,
+            consumible_id INTEGER NOT NULL,
+            fecha TEXT NOT NULL,
+            cantidad_real REAL NOT NULL,
+            unidad TEXT NOT NULL DEFAULT 'unidades',
+            lote_consumible TEXT,
+            observacion TEXT,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (orden_id) REFERENCES ordenes(id),
+            FOREIGN KEY (consumible_id) REFERENCES consumibles(id)
+        )
+        """
+    )
+
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS consumos_materias_primas (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            orden_id INTEGER NOT NULL,
+            materia_prima_id INTEGER NOT NULL,
+            fecha TEXT NOT NULL,
+            cantidad_real REAL NOT NULL,
+            unidad TEXT NOT NULL,
+            lote_mp TEXT,
+            observacion TEXT,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (orden_id) REFERENCES ordenes(id),
+            FOREIGN KEY (materia_prima_id) REFERENCES materias_primas(id)
+        )
+        """
+    )
+
     # Migración compatible: agregar familia_id si la base ya existía.
     cur.execute("PRAGMA table_info(productos)")
     product_columns = {row[1] for row in cur.fetchall()}
@@ -336,11 +531,22 @@ def init_db():
         ("fecha_vencimiento", "TEXT"),
         ("vida_util_meses", "INTEGER"),
         ("responsable_email", "TEXT"),
+        ("producto_id", "INTEGER"),
+        ("formulacion_id", "INTEGER"),
+        ("cantidad_real_producida", "REAL DEFAULT 0"),
     ]:
         if column_name not in order_columns:
             cur.execute(
                 f"ALTER TABLE ordenes ADD COLUMN {column_name} {column_type}"
             )
+
+    cur.execute(
+        """
+        UPDATE ordenes
+        SET cantidad_real_producida = COALESCE(cantidad_producida, 0)
+        WHERE cantidad_real_producida IS NULL
+        """
+    )
 
     # Cargar personas iniciales de SEV Tareas.
     for person in SEV_PERSONAS:
@@ -355,6 +561,31 @@ def init_db():
                 person["nombre"],
                 person["email"],
                 person["rol"],
+                datetime.now().isoformat(timespec="seconds"),
+            ),
+        )
+
+    # Cargar consumibles y embalajes del listado SIGA.
+    for code, description, warehouse, category, balance in DEFAULT_CONSUMABLES:
+        cur.execute(
+            """
+            INSERT OR IGNORE INTO consumibles (
+                codigo,
+                descripcion,
+                armazem,
+                categoria,
+                saldo_referencia,
+                activo,
+                created_at
+            )
+            VALUES (?, ?, ?, ?, ?, 1, ?)
+            """,
+            (
+                code,
+                description,
+                warehouse,
+                category,
+                balance,
                 datetime.now().isoformat(timespec="seconds"),
             ),
         )
@@ -493,10 +724,13 @@ def update_total_produced(order_id: int):
     execute(
         """
         UPDATE ordenes
-        SET cantidad_producida = ?, updated_at = ?
+        SET cantidad_producida = ?,
+            cantidad_real_producida = ?,
+            updated_at = ?
         WHERE id = ?
         """,
         (
+            total,
             total,
             datetime.now().isoformat(timespec="seconds"),
             order_id,
@@ -715,6 +949,164 @@ def is_admin():
     ) == "Administrador"
 
 
+
+
+def get_consumables(active_only=True):
+    where = "WHERE activo = 1" if active_only else ""
+    return fetch_df(
+        f"""
+        SELECT
+            id,
+            codigo,
+            descripcion,
+            armazem,
+            categoria,
+            saldo_referencia,
+            activo,
+            created_at
+        FROM consumibles
+        {where}
+        ORDER BY categoria, codigo, armazem
+        """
+    )
+
+
+def get_consumable_usage(order_id):
+    return fetch_df(
+        """
+        SELECT
+            cc.id,
+            cc.fecha,
+            c.codigo,
+            c.descripcion,
+            c.categoria,
+            cc.cantidad_real,
+            cc.unidad,
+            cc.lote_consumible,
+            cc.observacion
+        FROM consumos_consumibles cc
+        JOIN consumibles c
+            ON c.id = cc.consumible_id
+        WHERE cc.orden_id = ?
+        ORDER BY cc.fecha, cc.id
+        """,
+        (int(order_id),),
+    )
+
+
+def get_raw_materials(active_only=True):
+    where = "WHERE activo = 1" if active_only else ""
+    return fetch_df(
+        f"""
+        SELECT id, codigo, nombre, unidad, activo, created_at
+        FROM materias_primas
+        {where}
+        ORDER BY codigo, nombre
+        """
+    )
+
+
+def get_active_formulation(product_id):
+    df = fetch_df(
+        """
+        SELECT *
+        FROM formulaciones
+        WHERE producto_id = ?
+          AND activa = 1
+        ORDER BY version DESC
+        LIMIT 1
+        """,
+        (int(product_id),),
+    )
+    return None if df.empty else df.iloc[0].to_dict()
+
+
+def get_formulation_items(formulation_id):
+    if not formulation_id:
+        return pd.DataFrame()
+
+    return fetch_df(
+        """
+        SELECT
+            fi.id,
+            fi.formulacion_id,
+            fi.materia_prima_id,
+            mp.codigo AS mp_codigo,
+            mp.nombre AS materia_prima,
+            fi.cantidad,
+            fi.unidad,
+            fi.observacion
+        FROM formulacion_items fi
+        JOIN materias_primas mp
+          ON mp.id = fi.materia_prima_id
+        WHERE fi.formulacion_id = ?
+        ORDER BY mp.codigo, mp.nombre
+        """,
+        (int(formulation_id),),
+    )
+
+
+def calculate_theoretical_consumption(order_row):
+    formulation_id = order_row.get("formulacion_id")
+
+    if formulation_id is None or pd.isna(formulation_id):
+        return pd.DataFrame()
+
+    formulation = fetch_df(
+        "SELECT * FROM formulaciones WHERE id = ?",
+        (int(formulation_id),),
+    )
+    if formulation.empty:
+        return pd.DataFrame()
+
+    formulation = formulation.iloc[0]
+    items = get_formulation_items(int(formulation_id))
+    if items.empty:
+        return pd.DataFrame()
+
+    theoretical_qty = float(order_row.get("cantidad_planificada") or 0)
+    base_qty = float(formulation["cantidad_base"] or 1)
+    factor = theoretical_qty / base_qty if base_qty > 0 else 0
+
+    out = items.copy()
+    out["consumo_teorico"] = (
+        pd.to_numeric(out["cantidad"], errors="coerce").fillna(0) * factor
+    )
+    return out
+
+
+def get_actual_consumption(order_id):
+    return fetch_df(
+        """
+        SELECT
+            cmp.materia_prima_id,
+            mp.codigo AS mp_codigo,
+            mp.nombre AS materia_prima,
+            cmp.unidad,
+            SUM(cmp.cantidad_real) AS consumo_real
+        FROM consumos_materias_primas cmp
+        JOIN materias_primas mp
+          ON mp.id = cmp.materia_prima_id
+        WHERE cmp.orden_id = ?
+        GROUP BY
+            cmp.materia_prima_id,
+            mp.codigo,
+            mp.nombre,
+            cmp.unidad
+        ORDER BY mp.codigo, mp.nombre
+        """,
+        (int(order_id),),
+    )
+
+
+def production_variance(theoretical, actual):
+    theoretical = float(theoretical or 0)
+    actual = float(actual or 0)
+    if theoretical <= 0:
+        return 0.0
+    return (actual - theoretical) / theoretical * 100.0
+
+
 def get_orders():
     return fetch_df(
         """
@@ -804,6 +1196,9 @@ with st.sidebar:
             "Órdenes y lotes",
             "Familias",
             "Productos",
+            "Materias primas",
+            "Consumibles",
+            "Formulaciones",
             "Personas y correos",
         ],
         index=0,
@@ -899,7 +1294,7 @@ if section == "Tablero":
         else:
             for _, row in active.head(12).iterrows():
                 planned = float(row["cantidad_planificada"] or 0)
-                produced = float(row["cantidad_producida"] or 0)
+                produced = float(row["cantidad_real_producida"] or 0)
                 progress = (produced / planned * 100) if planned > 0 else 0
 
                 st.markdown(
@@ -944,8 +1339,8 @@ if section == "Tablero":
             "Orden",
             "Producto",
             "Familia",
-            "Planificado",
-            "Producido",
+            "Producción teórica",
+            "Producción real",
             "Unidad",
             "Inicio",
             "Finalización",
@@ -1054,6 +1449,7 @@ elif section == "Nueva orden":
                     product_id = None
                     producto = ""
                     unidad_default = "L"
+                    active_formula = None
                 else:
                     product_ids = family_products["id"].astype(int).tolist()
                     product_id = st.selectbox(
@@ -1079,6 +1475,20 @@ elif section == "Nueva orden":
                         selected_product["unidad"]
                     )
 
+                    active_formula = get_active_formulation(
+                        int(product_id)
+                    )
+
+                    if active_formula:
+                        st.success(
+                            f"Formulación activa V{active_formula['version']} · "
+                            f"base {active_formula['cantidad_base']} {active_formula['unidad_base']}"
+                        )
+                    else:
+                        st.warning(
+                            "Este producto todavía no tiene una formulación activa."
+                        )
+
                 unidad = st.selectbox(
                     "Unidad",
                     UNIDADES,
@@ -1088,7 +1498,7 @@ elif section == "Nueva orden":
                 )
 
                 cantidad = st.number_input(
-                    "Cantidad planificada",
+                    "Cantidad teórica a producir",
                     min_value=0.01,
                     value=250.0,
                     step=10.0,
@@ -1184,7 +1594,7 @@ elif section == "Nueva orden":
                 "Crear orden y lote",
                 type="primary",
                 use_container_width=True,
-                disabled=(product_id is None),
+                disabled=(product_id is None or active_formula is None),
             )
 
         if submitted:
@@ -1215,10 +1625,13 @@ elif section == "Nueva orden":
                     observaciones,
                     vida_util_meses,
                     fecha_vencimiento,
+                    producto_id,
+                    formulacion_id,
+                    cantidad_real_producida,
                     created_at,
                     updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, NULL, ?, ?, ?, 'Planificada', ?, ?, NULL, ?, ?)
+                VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, NULL, ?, ?, ?, 'Planificada', ?, ?, NULL, ?, ?, 0, ?, ?)
                 """,
                 (
                     order_code,
@@ -1234,6 +1647,8 @@ elif section == "Nueva orden":
                     prioridad,
                     observaciones.strip(),
                     int(vida_util_meses),
+                    int(product_id),
+                    int(active_formula["id"]),
                     now,
                     now,
                 ),
@@ -1399,6 +1814,61 @@ elif section == "Registrar producción":
             unsafe_allow_html=True,
         )
 
+
+        theoretical_consumption = calculate_theoretical_consumption(row)
+
+        if not theoretical_consumption.empty:
+            st.subheader("Consumo de materias primas · teórico vs real")
+
+            actual_consumption = get_actual_consumption(int(selected_id))
+
+            compare = theoretical_consumption[
+                ["materia_prima_id", "mp_codigo", "materia_prima", "unidad", "consumo_teorico"]
+            ].copy()
+
+            if not actual_consumption.empty:
+                compare = compare.merge(
+                    actual_consumption[["materia_prima_id", "consumo_real"]],
+                    on="materia_prima_id",
+                    how="left",
+                )
+            else:
+                compare["consumo_real"] = 0.0
+
+            compare["consumo_real"] = pd.to_numeric(
+                compare["consumo_real"], errors="coerce"
+            ).fillna(0)
+
+            compare["desvio_pct"] = (
+                (compare["consumo_real"] - compare["consumo_teorico"])
+                / compare["consumo_teorico"].replace(0, pd.NA)
+                * 100
+            )
+
+            st.dataframe(
+                compare[
+                    ["mp_codigo", "materia_prima", "consumo_teorico", "consumo_real", "unidad", "desvio_pct"]
+                ].rename(
+                    columns={
+                        "mp_codigo": "Código",
+                        "materia_prima": "Materia prima",
+                        "consumo_teorico": "Teórico",
+                        "consumo_real": "Real consumido",
+                        "unidad": "Unidad",
+                        "desvio_pct": "Desvío %",
+                    }
+                ).style.format(
+                    {
+                        "Teórico": "{:.3f}",
+                        "Real consumido": "{:.3f}",
+                        "Desvío %": "{:+.1f}%",
+                    },
+                    na_rep="—",
+                ),
+                use_container_width=True,
+                hide_index=True,
+            )
+
         with st.form("production_movement_form"):
 
             c1, c2 = st.columns(2)
@@ -1524,6 +1994,209 @@ elif section == "Registrar producción":
                 "Producción registrada correctamente."
             )
             st.rerun()
+
+
+
+        st.subheader("Registrar consumo real de materias primas")
+
+        theoretical_consumption = calculate_theoretical_consumption(row)
+
+        if theoretical_consumption.empty:
+            st.info("La orden no tiene una formulación vinculada.")
+        else:
+            mp_ids = theoretical_consumption["materia_prima_id"].astype(int).tolist()
+            mp_labels = {
+                int(r["materia_prima_id"]): f"{r['mp_codigo']} · {r['materia_prima']}"
+                for _, r in theoretical_consumption.iterrows()
+            }
+
+            with st.form(f"raw_material_consumption_{selected_id}"):
+
+                mc1, mc2 = st.columns(2)
+
+                with mc1:
+                    selected_mp_id = st.selectbox(
+                        "Materia prima",
+                        options=mp_ids,
+                        format_func=lambda mid: mp_labels[mid],
+                    )
+
+                    mp_row = theoretical_consumption[
+                        theoretical_consumption["materia_prima_id"] == selected_mp_id
+                    ].iloc[0]
+
+                    st.caption(
+                        f"Teórico total para esta orden: "
+                        f"{float(mp_row['consumo_teorico']):.3f} {mp_row['unidad']}"
+                    )
+
+                    real_mp_qty = st.number_input(
+                        f"Cantidad real consumida [{mp_row['unidad']}]",
+                        min_value=0.0,
+                        value=0.0,
+                        step=0.1,
+                    )
+
+                with mc2:
+                    mp_date = st.date_input(
+                        "Fecha de consumo",
+                        value=date.today(),
+                        key=f"mp_date_{selected_id}",
+                    )
+
+                    mp_lot = st.text_input(
+                        "Lote de materia prima",
+                        placeholder="Lote proveedor / interno",
+                    )
+
+                mp_note = st.text_area(
+                    "Observación",
+                    key=f"mp_note_{selected_id}",
+                )
+
+                save_mp = st.form_submit_button(
+                    "Guardar consumo real",
+                    type="primary",
+                    use_container_width=True,
+                )
+
+            if save_mp:
+                execute(
+                    """
+                    INSERT INTO consumos_materias_primas (
+                        orden_id,
+                        materia_prima_id,
+                        fecha,
+                        cantidad_real,
+                        unidad,
+                        lote_mp,
+                        observacion,
+                        created_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        int(selected_id),
+                        int(selected_mp_id),
+                        mp_date.isoformat(),
+                        float(real_mp_qty),
+                        str(mp_row["unidad"]),
+                        mp_lot.strip(),
+                        mp_note.strip(),
+                        datetime.now().isoformat(timespec="seconds"),
+                    ),
+                )
+
+                add_event(
+                    int(selected_id),
+                    "Consumo de materia prima",
+                    (
+                        f"{mp_labels[selected_mp_id]} · "
+                        f"{real_mp_qty} {mp_row['unidad']} · "
+                        f"Lote MP: {mp_lot or '—'}"
+                    ),
+                )
+
+                st.success("Consumo real registrado.")
+                st.rerun()
+
+
+
+        st.subheader("Registrar consumibles / embalajes utilizados")
+
+        consumables_available = get_consumables(active_only=True)
+
+        if consumables_available.empty:
+            st.info("No hay consumibles activos.")
+        else:
+            cons_ids = consumables_available["id"].astype(int).tolist()
+
+            with st.form(f"consumable_usage_{selected_id}"):
+
+                cu1, cu2 = st.columns(2)
+
+                with cu1:
+                    cons_id = st.selectbox(
+                        "Consumible / embalaje",
+                        options=cons_ids,
+                        format_func=lambda cid: (
+                            f"{consumables_available.loc[consumables_available['id'] == cid, 'codigo'].iloc[0]} · "
+                            f"{consumables_available.loc[consumables_available['id'] == cid, 'descripcion'].iloc[0]}"
+                        ),
+                    )
+
+                    cons_qty = st.number_input(
+                        "Cantidad utilizada",
+                        min_value=0.0,
+                        value=0.0,
+                        step=1.0,
+                    )
+
+                    cons_unit = st.selectbox(
+                        "Unidad de consumo",
+                        ["unidades", "kg", "g", "L", "mL", "m"],
+                    )
+
+                with cu2:
+                    cons_date = st.date_input(
+                        "Fecha de uso",
+                        value=date.today(),
+                        key=f"cons_date_{selected_id}",
+                    )
+
+                    cons_lot = st.text_input(
+                        "Lote / referencia del consumible"
+                    )
+
+                cons_note = st.text_area(
+                    "Observación",
+                    key=f"cons_note_{selected_id}",
+                )
+
+                save_cons_usage = st.form_submit_button(
+                    "Guardar consumo",
+                    type="primary",
+                    use_container_width=True,
+                )
+
+            if save_cons_usage:
+                execute(
+                    """
+                    INSERT INTO consumos_consumibles (
+                        orden_id,
+                        consumible_id,
+                        fecha,
+                        cantidad_real,
+                        unidad,
+                        lote_consumible,
+                        observacion,
+                        created_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        int(selected_id),
+                        int(cons_id),
+                        cons_date.isoformat(),
+                        float(cons_qty),
+                        cons_unit,
+                        cons_lot.strip(),
+                        cons_note.strip(),
+                        datetime.now().isoformat(timespec="seconds"),
+                    ),
+                )
+
+                add_event(
+                    int(selected_id),
+                    "Consumo de consumible",
+                    (
+                        f"{consumables_available.loc[consumables_available['id'] == cons_id, 'codigo'].iloc[0]} · "
+                        f"{cons_qty} {cons_unit}"
+                    ),
+                )
+
+                st.success("Consumo de consumible registrado.")
+                st.rerun()
 
 
 # ============================================================
@@ -1698,6 +2371,42 @@ elif section == "Órdenes y lotes":
                             "cantidad": "Cantidad",
                             "observacion": "Observación",
                             "created_at": "Registrado",
+                        }
+                    ),
+                    use_container_width=True,
+                    hide_index=True,
+                )
+
+
+            used_consumables = get_consumable_usage(
+                int(selected_order)
+            )
+
+            if not used_consumables.empty:
+                st.write("Consumibles / embalajes utilizados")
+
+                st.dataframe(
+                    used_consumables[
+                        [
+                            "fecha",
+                            "codigo",
+                            "descripcion",
+                            "categoria",
+                            "cantidad_real",
+                            "unidad",
+                            "lote_consumible",
+                            "observacion",
+                        ]
+                    ].rename(
+                        columns={
+                            "fecha": "Fecha",
+                            "codigo": "Código",
+                            "descripcion": "Descripción",
+                            "categoria": "Categoría",
+                            "cantidad_real": "Cantidad",
+                            "unidad": "Unidad",
+                            "lote_consumible": "Lote / referencia",
+                            "observacion": "Observación",
                         }
                     ),
                     use_container_width=True,
@@ -2310,6 +3019,470 @@ elif section == "Productos":
 
 
 
+
+# ============================================================
+# MATERIAS PRIMAS
+# ============================================================
+
+elif section == "Materias primas":
+
+    st.subheader("Maestro de materias primas")
+
+    if is_admin():
+        with st.form("new_raw_material_form"):
+            r1, r2, r3 = st.columns(3)
+
+            with r1:
+                mp_code = st.text_input("Código", placeholder="Ej.: MP-001")
+            with r2:
+                mp_name = st.text_input("Materia prima")
+            with r3:
+                mp_unit = st.selectbox("Unidad", ["kg", "g", "L", "mL", "unidades"])
+
+            add_mp = st.form_submit_button(
+                "Agregar materia prima",
+                type="primary",
+                use_container_width=True,
+            )
+
+        if add_mp:
+            code = mp_code.strip().upper()
+            name = mp_name.strip()
+
+            if not code or not name:
+                st.error("Ingresá código y nombre.")
+            else:
+                existing = fetch_df(
+                    "SELECT id FROM materias_primas WHERE UPPER(codigo)=UPPER(?)",
+                    (code,),
+                )
+
+                if not existing.empty:
+                    st.error("Ese código ya existe.")
+                else:
+                    execute(
+                        """
+                        INSERT INTO materias_primas (
+                            codigo, nombre, unidad, activo, created_at
+                        )
+                        VALUES (?, ?, ?, 1, ?)
+                        """,
+                        (
+                            code,
+                            name,
+                            mp_unit,
+                            datetime.now().isoformat(timespec="seconds"),
+                        ),
+                    )
+                    st.success("Materia prima agregada.")
+                    st.rerun()
+
+    materials = get_raw_materials(active_only=False)
+
+    if materials.empty:
+        st.info("Todavía no existen materias primas.")
+    else:
+        display = materials.copy()
+        display["Estado"] = display["activo"].map({1: "Activa", 0: "Inactiva"})
+
+        st.dataframe(
+            display[
+                ["codigo", "nombre", "unidad", "Estado"]
+            ].rename(
+                columns={
+                    "codigo": "Código",
+                    "nombre": "Materia prima",
+                    "unidad": "Unidad",
+                }
+            ),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+
+# ============================================================
+# CONSUMIBLES
+# ============================================================
+
+elif section == "Consumibles":
+
+    st.subheader("Consumibles y embalajes")
+
+    st.caption(
+        "Listado inicial cargado desde SIGA/MATA225. "
+        "MC = consumibles y EM = embalajes."
+    )
+
+    consumables_df = get_consumables(active_only=False)
+
+    if consumables_df.empty:
+        st.info("Todavía no existen consumibles cargados.")
+    else:
+        c1, c2 = st.columns(2)
+
+        with c1:
+            category_filter = st.selectbox(
+                "Categoría",
+                ["Todas", "Consumible", "Embalaje"],
+            )
+
+        with c2:
+            search_consumable = st.text_input(
+                "Buscar código o descripción"
+            )
+
+        view = consumables_df.copy()
+
+        if category_filter != "Todas":
+            view = view[
+                view["categoria"] == category_filter
+            ]
+
+        if search_consumable.strip():
+            q = search_consumable.strip().lower()
+            view = view[
+                view["codigo"].astype(str).str.lower().str.contains(q, na=False)
+                | view["descripcion"].astype(str).str.lower().str.contains(q, na=False)
+            ]
+
+        st.dataframe(
+            view[
+                [
+                    "codigo",
+                    "descripcion",
+                    "categoria",
+                    "armazem",
+                    "saldo_referencia",
+                ]
+            ].rename(
+                columns={
+                    "codigo": "Código",
+                    "descripcion": "Descripción",
+                    "categoria": "Categoría",
+                    "armazem": "Almacén",
+                    "saldo_referencia": "Saldo SIGA ref.",
+                }
+            ),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+        st.download_button(
+            "⬇️ Descargar consumibles",
+            data=view.to_csv(
+                index=False,
+                sep=";",
+            ).encode("utf-8-sig"),
+            file_name="sev_consumibles.csv",
+            mime="text/csv",
+        )
+
+    if is_admin():
+        st.divider()
+        st.subheader("Agregar consumible")
+
+        with st.form("new_consumable_form"):
+            cc1, cc2 = st.columns(2)
+
+            with cc1:
+                new_cons_code = st.text_input(
+                    "Código"
+                )
+                new_cons_desc = st.text_input(
+                    "Descripción"
+                )
+
+            with cc2:
+                new_cons_cat = st.selectbox(
+                    "Categoría",
+                    ["Consumible", "Embalaje"],
+                )
+                new_cons_wh = st.text_input(
+                    "Almacén"
+                )
+
+            save_cons = st.form_submit_button(
+                "Agregar consumible",
+                type="primary",
+                use_container_width=True,
+            )
+
+        if save_cons:
+            if not new_cons_code.strip() or not new_cons_desc.strip():
+                st.error("Ingresá código y descripción.")
+            else:
+                execute(
+                    """
+                    INSERT OR IGNORE INTO consumibles (
+                        codigo,
+                        descripcion,
+                        armazem,
+                        categoria,
+                        saldo_referencia,
+                        activo,
+                        created_at
+                    )
+                    VALUES (?, ?, ?, ?, NULL, 1, ?)
+                    """,
+                    (
+                        new_cons_code.strip().upper(),
+                        new_cons_desc.strip(),
+                        new_cons_wh.strip(),
+                        new_cons_cat,
+                        datetime.now().isoformat(timespec="seconds"),
+                    ),
+                )
+                st.success("Consumible agregado.")
+                st.rerun()
+
+
+# ============================================================
+# FORMULACIONES
+# ============================================================
+
+elif section == "Formulaciones":
+
+    st.subheader("Formulaciones por producto")
+
+    products = get_products(active_only=True)
+    materials = get_raw_materials(active_only=True)
+
+    if products.empty:
+        st.warning("Primero cargá productos.")
+    elif materials.empty:
+        st.warning("Primero cargá materias primas.")
+    else:
+        product_ids = products["id"].astype(int).tolist()
+
+        selected_product_id = st.selectbox(
+            "Producto",
+            options=product_ids,
+            format_func=lambda pid: (
+                f"{products.loc[products['id'] == pid, 'familia_codigo'].iloc[0]} · "
+                f"{products.loc[products['id'] == pid, 'nombre'].iloc[0]}"
+            ),
+        )
+
+        selected_product = products[
+            products["id"] == selected_product_id
+        ].iloc[0]
+
+        active_formula = get_active_formulation(int(selected_product_id))
+
+        if active_formula:
+            st.success(
+                f"Formulación activa V{active_formula['version']} · "
+                f"Base {active_formula['cantidad_base']} {active_formula['unidad_base']}"
+            )
+
+            items = get_formulation_items(int(active_formula["id"]))
+
+            if not items.empty:
+                st.dataframe(
+                    items[
+                        ["mp_codigo", "materia_prima", "cantidad", "unidad", "observacion"]
+                    ].rename(
+                        columns={
+                            "mp_codigo": "Código",
+                            "materia_prima": "Materia prima",
+                            "cantidad": "Cantidad receta",
+                            "unidad": "Unidad",
+                            "observacion": "Observación",
+                        }
+                    ),
+                    use_container_width=True,
+                    hide_index=True,
+                )
+        else:
+            st.info("El producto no tiene formulación activa.")
+
+        if is_admin():
+            st.divider()
+            st.subheader("Crear nueva versión de formulación")
+
+            previous_version = int(active_formula["version"]) if active_formula else 0
+
+            with st.form(f"new_formula_{selected_product_id}"):
+                f1, f2 = st.columns(2)
+
+                with f1:
+                    base_qty = st.number_input(
+                        "Cantidad base de receta",
+                        min_value=0.01,
+                        value=100.0,
+                        step=10.0,
+                    )
+
+                with f2:
+                    base_unit = st.selectbox(
+                        "Unidad del producto base",
+                        UNIDADES,
+                        index=(
+                            UNIDADES.index(selected_product["unidad"])
+                            if selected_product["unidad"] in UNIDADES
+                            else 0
+                        ),
+                    )
+
+                formula_obs = st.text_area("Observaciones de la formulación")
+
+                create_formula = st.form_submit_button(
+                    f"Crear formulación V{previous_version + 1}",
+                    type="primary",
+                    use_container_width=True,
+                )
+
+            if create_formula:
+                execute(
+                    "UPDATE formulaciones SET activa=0 WHERE producto_id=?",
+                    (int(selected_product_id),),
+                )
+
+                formula_id = execute(
+                    """
+                    INSERT INTO formulaciones (
+                        producto_id, version, cantidad_base, unidad_base,
+                        observaciones, activa, created_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, 1, ?)
+                    """,
+                    (
+                        int(selected_product_id),
+                        previous_version + 1,
+                        float(base_qty),
+                        base_unit,
+                        formula_obs.strip(),
+                        datetime.now().isoformat(timespec="seconds"),
+                    ),
+                )
+
+                st.session_state["editing_formula_id"] = int(formula_id)
+                st.success(
+                    f"Formulación V{previous_version + 1} creada. "
+                    "Ahora agregá las materias primas."
+                )
+                st.rerun()
+
+            editing_formula_id = st.session_state.get("editing_formula_id")
+
+            if editing_formula_id:
+                formula_edit = fetch_df(
+                    "SELECT * FROM formulaciones WHERE id=?",
+                    (int(editing_formula_id),),
+                )
+
+                if not formula_edit.empty:
+                    formula_edit = formula_edit.iloc[0].to_dict()
+
+                    if int(formula_edit["producto_id"]) == int(selected_product_id):
+
+                        st.subheader(
+                            f"Agregar materias primas · V{formula_edit['version']}"
+                        )
+
+                        material_ids = materials["id"].astype(int).tolist()
+
+                        with st.form(f"add_formula_item_{editing_formula_id}"):
+
+                            i1, i2 = st.columns(2)
+
+                            with i1:
+                                material_id = st.selectbox(
+                                    "Materia prima",
+                                    options=material_ids,
+                                    format_func=lambda mid: (
+                                        f"{materials.loc[materials['id'] == mid, 'codigo'].iloc[0]} · "
+                                        f"{materials.loc[materials['id'] == mid, 'nombre'].iloc[0]}"
+                                    ),
+                                )
+
+                            selected_material = materials[
+                                materials["id"] == material_id
+                            ].iloc[0]
+
+                            with i2:
+                                material_qty = st.number_input(
+                                    f"Cantidad [{selected_material['unidad']}]",
+                                    min_value=0.0,
+                                    value=0.0,
+                                    step=0.1,
+                                )
+
+                            material_note = st.text_input("Observación / función")
+
+                            add_formula_item = st.form_submit_button(
+                                "Agregar a la formulación",
+                                type="primary",
+                                use_container_width=True,
+                            )
+
+                        if add_formula_item:
+                            existing_item = fetch_df(
+                                """
+                                SELECT id
+                                FROM formulacion_items
+                                WHERE formulacion_id=?
+                                  AND materia_prima_id=?
+                                """,
+                                (
+                                    int(editing_formula_id),
+                                    int(material_id),
+                                ),
+                            )
+
+                            if not existing_item.empty:
+                                st.error("Esa materia prima ya está en la formulación.")
+                            else:
+                                execute(
+                                    """
+                                    INSERT INTO formulacion_items (
+                                        formulacion_id, materia_prima_id,
+                                        cantidad, unidad, observacion
+                                    )
+                                    VALUES (?, ?, ?, ?, ?)
+                                    """,
+                                    (
+                                        int(editing_formula_id),
+                                        int(material_id),
+                                        float(material_qty),
+                                        str(selected_material["unidad"]),
+                                        material_note.strip(),
+                                    ),
+                                )
+                                st.success("Materia prima agregada.")
+                                st.rerun()
+
+                        current_items = get_formulation_items(
+                            int(editing_formula_id)
+                        )
+
+                        if not current_items.empty:
+                            st.dataframe(
+                                current_items[
+                                    ["mp_codigo", "materia_prima", "cantidad", "unidad", "observacion"]
+                                ].rename(
+                                    columns={
+                                        "mp_codigo": "Código",
+                                        "materia_prima": "Materia prima",
+                                        "cantidad": "Cantidad receta",
+                                        "unidad": "Unidad",
+                                        "observacion": "Observación",
+                                    }
+                                ),
+                                use_container_width=True,
+                                hide_index=True,
+                            )
+
+                            if st.button(
+                                "Finalizar edición de formulación",
+                                type="primary",
+                                use_container_width=True,
+                            ):
+                                st.session_state.pop("editing_formula_id", None)
+                                st.success("Formulación lista para utilizar.")
+                                st.rerun()
+
+
 # ============================================================
 # PERSONAS Y CORREOS
 # ============================================================
@@ -2471,5 +3644,5 @@ elif section == "Personas y correos":
 st.divider()
 st.caption(
     f"SEV | Control de Producción · {APP_VERSION} · "
-    "Órdenes internas, lotes, vencimientos, correos y trazabilidad de producción"
+    "Órdenes, lotes, formulaciones, materias primas, consumibles y trazabilidad"
 )
