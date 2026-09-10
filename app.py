@@ -26,7 +26,7 @@ import streamlit as st
 # CONFIGURACIÓN
 # ============================================================
 
-APP_VERSION = "V1.13"
+APP_VERSION = "V1.14"
 APP_TITLE = "SEV | Control de Producción"
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -2273,6 +2273,156 @@ if section == "Tablero":
             st.info(
                 "Todavía no hay lotes con formulación asignada para calcular consumos."
             )
+
+
+    st.subheader("Totalizador de materias primas")
+
+    st.caption(
+        "Suma el consumo teórico de cada materia prima considerando todos los lotes "
+        "mostrados en el tablero."
+    )
+
+    if 'consumption_board' in locals() and not consumption_board.empty:
+
+        totals_mp = (
+            consumption_board
+            .groupby(
+                [
+                    "Código TOTVS",
+                    "Materia prima",
+                ],
+                as_index=False,
+            )
+            .agg(
+                {
+                    "Consumo teórico kg": "sum",
+                    "Consumo teórico L": "sum",
+                }
+            )
+        )
+
+        totals_mp["Cantidad de lotes"] = (
+            consumption_board
+            .groupby(
+                [
+                    "Código TOTVS",
+                    "Materia prima",
+                ]
+            )["Lote producción"]
+            .nunique()
+            .values
+        )
+
+        totals_mp = totals_mp[
+            [
+                "Código TOTVS",
+                "Materia prima",
+                "Cantidad de lotes",
+                "Consumo teórico kg",
+                "Consumo teórico L",
+            ]
+        ].sort_values(
+            by="Consumo teórico kg",
+            ascending=False,
+        )
+
+        # Fila TOTAL GENERAL
+        total_general = pd.DataFrame(
+            [
+                {
+                    "Código TOTVS": "TOTAL",
+                    "Materia prima": "TOTAL GENERAL",
+                    "Cantidad de lotes": int(
+                        consumption_board["Lote producción"].nunique()
+                    ),
+                    "Consumo teórico kg": float(
+                        totals_mp["Consumo teórico kg"].sum()
+                    ),
+                    "Consumo teórico L": float(
+                        totals_mp["Consumo teórico L"].sum()
+                    ),
+                }
+            ]
+        )
+
+        totals_with_general = pd.concat(
+            [
+                totals_mp,
+                total_general,
+            ],
+            ignore_index=True,
+        )
+
+        st.dataframe(
+            totals_with_general.style.format(
+                {
+                    "Cantidad de lotes": "{:.0f}",
+                    "Consumo teórico kg": "{:,.3f}",
+                    "Consumo teórico L": "{:,.3f}",
+                }
+            ),
+            use_container_width=True,
+            hide_index=True,
+            height=min(
+                420,
+                38 + 35 * max(len(totals_with_general), 1),
+            ),
+            column_config={
+                "Código TOTVS": st.column_config.TextColumn(
+                    width="small"
+                ),
+                "Materia prima": st.column_config.TextColumn(
+                    width="large"
+                ),
+                "Cantidad de lotes": st.column_config.NumberColumn(
+                    width="small",
+                    format="%d",
+                ),
+                "Consumo teórico kg": st.column_config.NumberColumn(
+                    width="medium",
+                    format="%.3f",
+                ),
+                "Consumo teórico L": st.column_config.NumberColumn(
+                    width="medium",
+                    format="%.3f",
+                ),
+            },
+        )
+
+        # Indicadores rápidos
+        t1, t2, t3 = st.columns(3)
+
+        t1.metric(
+            "Materias primas",
+            int(len(totals_mp)),
+        )
+
+        t2.metric(
+            "Total teórico kg",
+            f"{totals_mp['Consumo teórico kg'].sum():,.3f}",
+        )
+
+        t3.metric(
+            "Total teórico L",
+            f"{totals_mp['Consumo teórico L'].sum():,.3f}",
+        )
+
+        st.download_button(
+            "⬇️ Descargar totalizador de materias primas",
+            data=totals_with_general.to_csv(
+                index=False,
+                sep=";",
+            ).encode("utf-8-sig"),
+            file_name="sev_totalizador_materias_primas.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
+
+    else:
+        st.info(
+            "Todavía no hay consumos de materias primas para totalizar."
+        )
+
 
     st.subheader("Resumen por línea")
 
