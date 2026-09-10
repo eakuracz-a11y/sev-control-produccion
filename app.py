@@ -26,7 +26,7 @@ import streamlit as st
 # CONFIGURACIÓN
 # ============================================================
 
-APP_VERSION = "V1.10"
+APP_VERSION = "V1.11"
 APP_TITLE = "SEV | Control de Producción"
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -2555,8 +2555,8 @@ elif section == "Registrar producción":
 
     if active.empty:
         st.info("No hay órdenes activas para registrar producción.")
-    else:
 
+    else:
         labels = {
             int(row["id"]):
                 f"{row['lote_codigo']} · {row['producto']} · {row['estado']}"
@@ -2569,26 +2569,44 @@ elif section == "Registrar producción":
             format_func=lambda x: labels[x],
         )
 
-        row = active[
+        # Leer siempre el dato actualizado directamente desde SQLite.
+        row_dict = get_order_by_id(int(selected_id))
+        row = pd.Series(row_dict) if row_dict else active[
             active["id"] == selected_id
         ].iloc[0]
 
-        planned = float(row["cantidad_planificada"] or 0)
-        produced = float(row["cantidad_producida"] or 0)
-        remaining = max(planned - produced, 0)
+        planned = float(row.get("cantidad_planificada") or 0)
 
-        c1, c2, c3 = st.columns(3)
+        produced = float(
+            row.get("cantidad_real_producida")
+            if pd.notna(row.get("cantidad_real_producida"))
+            else row.get("cantidad_producida")
+            or 0
+        )
+
+        remaining = max(planned - produced, 0)
+        variance = production_variance(planned, produced)
+
+        c1, c2, c3, c4 = st.columns(4)
+
         c1.metric(
-            "Planificado",
+            "Producción teórica",
             fmt_qty(planned, row["unidad"]),
         )
+
         c2.metric(
-            "Producido",
+            "Producción real",
             fmt_qty(produced, row["unidad"]),
         )
+
         c3.metric(
             "Pendiente",
             fmt_qty(remaining, row["unidad"]),
+        )
+
+        c4.metric(
+            "Ajuste",
+            f"{variance:+.1f}%",
         )
 
         st.markdown(
@@ -2597,19 +2615,316 @@ elif section == "Registrar producción":
                 <div class="sev-lot">{row['lote_codigo']}</div>
                 Orden interna: <b>{row['orden_codigo']}</b><br>
                 Producto: <b>{row['producto']}</b><br>
-                Responsable: {row['responsable'] or '—'}
+                Responsable: {row['responsable'] or '—'}<br>
+                Fecha máxima de cierre:
+                <b>{
+                    get_order_close_deadline(row).strftime('%d/%m/%Y')
+                    if get_order_close_deadline(row)
+                    else '—'
+                }</b>
             </div>
             """,
             unsafe_allow_html=True,
         )
 
+        # ====================================================
+        # CARGA DE PRODUCCIÓN - ARRIBA Y VISIBLE
+        # ====================================================
 
-        theoretical_consumption = calculate_theoretical_consumption(row)
+        st.subheader("Carga de producción real")
+
+        st.caption(
+            "Podés ingresar el total acumulado producido o agregar solamente "
+            "la producción realizada en esta fecha."
+        )
+
+        load_mode = st.radio(
+            "Forma de carga",
+            [
+                "Ingresar saldo producido acumulado",
+                "Agregar producción del día",
+            ],
+            horizontal=True,
+        )
+
+        with st.form(
+            f"production_movement_form_{selected_id}"
+        ):
+            p1, p2 = st.columns(2)
+
+            with p1:
+                prod_date = st.date_input(
+                    "Fecha de producción",
+                    value=date.today(),
+                    key=f"prod_date_{selected_id}",
+                )
+
+                if load_mode == "Ingresar saldo producido acumulado":
+                    entered_qty = st.number_input(
+                        f"Saldo producido acumulado [{row['unidad']}]",
+                        min_value=0.0,
+                        value=float(produced),
+                        step=1.0,
+                        key=f"produced_balance_{selected_id}",
+                        help=(
+                            "Ingresá cuánto lleva producido el lote en total. "
+                            "El sistema calcula automáticamente la diferencia "
+                            "contra el saldo ya registrado."
+                        ),
+                    )
+
+                    delta_preview = float(entered_qty) - float(produced)
+
+                    if abs(delta_preview) < 1e-9:
+                        st.info(
+                            "El saldo ingresado coincide con el saldo actualmente registrado."
+                        )
+                    elif delta_preview > 0:
+                        st.success(
+                            f"Se agregarán {delta_preview:,.3f} {row['unidad']} "
+                            "al registro de producción."
+                        )
+                    else:
+                        st.warning(
+                            f"Se corregirá el saldo en {delta_preview:,.3f} {row['unidad']}."
+                        )
+
+                else:
+                    entered_qty = st.number_input(
+                        f"Producción de esta fecha [{row['unidad']}]",
+                        min_value=0.0,
+                        value=float(remaining if remaining > 0 else 0.0),
+                        step=1.0,
+                        key=f"daily_produced_{selected_id}",
+                    )
+
+            with p2:
+                new_status = st.selectbox(
+                    "Estado después del registro",
+                    ESTADOS,
+                    index=ESTADOS.index(
+                        "En producción"
+                        if row["estado"] in ("Planificada", "En preparación")
+                        else row["estado"]
+                    ),
+                    key=f"production_status_{selected_id}",
+                )
+
+                close_order = st.checkbox(
+                    "Cerrar / finalizar lote con este registro",
+                    value=False,
+                    key=f"close_with_production_{selected_id}",
+                )
+
+                if close_order:
+                    close_deadline = get_order_close_deadline(row)
+                    if close_deadline:
+                        st.caption(
+                            f"Cierre máximo permitido: "
+                            f"{close_deadline.strftime('%d/%m/%Y')}"
+                        )
+
+            note = st.text_area(
+                "Observación del registro",
+                key=f"production_note_{selected_id}",
+            )
+
+            save_prod = st.form_submit_button(
+                "💾 Guardar saldo producido",
+                type="primary",
+                use_container_width=True,
+            )
+
+        if save_prod:
+
+            if load_mode == "Ingresar saldo producido acumulado":
+                movement_qty = float(entered_qty) - float(produced)
+                new_total = float(entered_qty)
+                event_detail = (
+                    f"Saldo acumulado corregido de {produced:.3f} "
+                    f"a {new_total:.3f} {row['unidad']}."
+                )
+            else:
+                movement_qty = float(entered_qty)
+                new_total = float(produced) + float(entered_qty)
+                event_detail = (
+                    f"Producción del día: {movement_qty:.3f} {row['unidad']}. "
+                    f"Nuevo acumulado: {new_total:.3f} {row['unidad']}."
+                )
+
+            # Validar fecha de cierre mensual.
+            requested_status = (
+                "Finalizada"
+                if close_order
+                else new_status
+            )
+
+            close_deadline = get_order_close_deadline(row)
+
+            if (
+                requested_status == "Finalizada"
+                and close_deadline
+                and prod_date > close_deadline
+            ):
+                st.error(
+                    f"No se guardó el registro. La fecha máxima de cierre "
+                    f"de esta orden es {close_deadline.strftime('%d/%m/%Y')}."
+                )
+
+            elif (
+                load_mode == "Agregar producción del día"
+                and float(entered_qty) <= 0
+            ):
+                st.error(
+                    "Ingresá una cantidad mayor que cero para agregar producción."
+                )
+
+            else:
+                # En modo saldo, un delta 0 es válido como confirmación,
+                # pero no generamos un movimiento inútil.
+                if abs(movement_qty) > 1e-9:
+                    execute(
+                        """
+                        INSERT INTO movimientos_produccion (
+                            orden_id,
+                            fecha,
+                            cantidad,
+                            observacion,
+                            created_at
+                        )
+                        VALUES (?, ?, ?, ?, ?)
+                        """,
+                        (
+                            int(selected_id),
+                            prod_date.isoformat(),
+                            float(movement_qty),
+                            (
+                                note.strip()
+                                + (
+                                    " · Ajuste de saldo acumulado"
+                                    if load_mode
+                                    == "Ingresar saldo producido acumulado"
+                                    else ""
+                                )
+                            ).strip(" ·"),
+                            datetime.now().isoformat(
+                                timespec="seconds"
+                            ),
+                        ),
+                    )
+
+                # Guardar explícitamente el saldo final para evitar que quede en 0.
+                execute(
+                    """
+                    UPDATE ordenes
+                    SET cantidad_producida = ?,
+                        cantidad_real_producida = ?,
+                        updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        float(new_total),
+                        float(new_total),
+                        datetime.now().isoformat(
+                            timespec="seconds"
+                        ),
+                        int(selected_id),
+                    ),
+                )
+
+                final_status = requested_status
+
+                fecha_fin = None
+                expiry_date = None
+
+                if final_status == "Finalizada":
+                    fecha_fin = prod_date.isoformat()
+
+                    shelf_months = int(
+                        row.get("vida_util_meses")
+                        if pd.notna(
+                            row.get("vida_util_meses")
+                        )
+                        else DEFAULT_SHELF_LIFE_MONTHS
+                    )
+
+                    expiry_date = months_after(
+                        prod_date,
+                        shelf_months,
+                    ).isoformat()
+
+                execute(
+                    """
+                    UPDATE ordenes
+                    SET estado = ?,
+                        fecha_fin = ?,
+                        fecha_vencimiento = ?,
+                        updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        final_status,
+                        fecha_fin,
+                        expiry_date,
+                        datetime.now().isoformat(
+                            timespec="seconds"
+                        ),
+                        int(selected_id),
+                    ),
+                )
+
+                add_event(
+                    int(selected_id),
+                    "Producción real actualizada",
+                    event_detail,
+                )
+
+                # Verificación inmediata desde SQLite.
+                saved = get_order_by_id(
+                    int(selected_id)
+                )
+
+                saved_real = float(
+                    saved.get("cantidad_real_producida")
+                    if saved
+                    and pd.notna(
+                        saved.get("cantidad_real_producida")
+                    )
+                    else 0
+                )
+
+                if abs(saved_real - new_total) < 1e-6:
+                    st.success(
+                        f"Producción guardada correctamente: "
+                        f"{saved_real:,.3f} {row['unidad']}."
+                    )
+                    st.session_state[
+                        "last_production_order"
+                    ] = int(selected_id)
+                    st.rerun()
+                else:
+                    st.error(
+                        "La base no confirmó el nuevo saldo producido. "
+                        "No se recargó la pantalla para evitar ocultar el error."
+                    )
+
+        # ====================================================
+        # MATERIAS PRIMAS - DESPUÉS DE LA CARGA DE PRODUCCIÓN
+        # ====================================================
+
+        theoretical_consumption = calculate_theoretical_consumption(
+            row
+        )
 
         if not theoretical_consumption.empty:
-            st.subheader("Consumo de materias primas · teórico vs real")
 
-            actual_consumption = get_actual_consumption(int(selected_id))
+            st.subheader(
+                "Consumo de materias primas · teórico vs real"
+            )
+
+            actual_consumption = get_actual_consumption(
+                int(selected_id)
+            )
 
             compare = theoretical_consumption[
                 [
@@ -2626,20 +2941,33 @@ elif section == "Registrar producción":
 
             if not actual_consumption.empty:
                 compare = compare.merge(
-                    actual_consumption[["materia_prima_id", "consumo_real"]],
+                    actual_consumption[
+                        [
+                            "materia_prima_id",
+                            "consumo_real",
+                        ]
+                    ],
                     on="materia_prima_id",
                     how="left",
                 )
             else:
-                compare["consumo_real"] = 0.0
+                compare[
+                    "consumo_real"
+                ] = 0.0
 
             compare["consumo_real"] = pd.to_numeric(
-                compare["consumo_real"], errors="coerce"
+                compare["consumo_real"],
+                errors="coerce",
             ).fillna(0)
 
             compare["desvio_pct"] = (
-                (compare["consumo_real"] - compare["consumo_teorico"])
-                / compare["consumo_teorico"].replace(0, pd.NA)
+                (
+                    compare["consumo_real"]
+                    - compare["consumo_teorico"]
+                )
+                / compare[
+                    "consumo_teorico"
+                ].replace(0, pd.NA)
                 * 100
             )
 
@@ -2658,157 +2986,45 @@ elif section == "Registrar producción":
                     ]
                 ].rename(
                     columns={
-                        "mp_codigo": "Código",
-                        "materia_prima": "Materia prima",
-                        "densidad": "Densidad kg/L",
-                        "porcentaje_mm": "% m/m",
-                        "consumo_teorico": "Teórico kg",
-                        "consumo_teorico_l": "Teórico L",
-                        "consumo_real": "Real consumido",
-                        "unidad": "Unidad",
-                        "desvio_pct": "Desvío %",
+                        "mp_codigo":
+                            "Código",
+                        "materia_prima":
+                            "Materia prima",
+                        "densidad":
+                            "Densidad kg/L",
+                        "porcentaje_mm":
+                            "% m/m",
+                        "consumo_teorico":
+                            "Teórico kg",
+                        "consumo_teorico_l":
+                            "Teórico L",
+                        "consumo_real":
+                            "Real consumido",
+                        "unidad":
+                            "Unidad",
+                        "desvio_pct":
+                            "Desvío %",
                     }
                 ).style.format(
                     {
-                        "Densidad kg/L": "{:.3f}",
-                        "% m/m": "{:.1f}%",
-                        "Teórico kg": "{:.3f}",
-                        "Teórico L": "{:.3f}",
-                        "Real consumido": "{:.3f}",
-                        "Desvío %": "{:+.1f}%",
+                        "Densidad kg/L":
+                            "{:.3f}",
+                        "% m/m":
+                            "{:.1f}%",
+                        "Teórico kg":
+                            "{:.3f}",
+                        "Teórico L":
+                            "{:.3f}",
+                        "Real consumido":
+                            "{:.3f}",
+                        "Desvío %":
+                            "{:+.1f}%",
                     },
                     na_rep="—",
                 ),
                 use_container_width=True,
                 hide_index=True,
             )
-
-        with st.form("production_movement_form"):
-
-            c1, c2 = st.columns(2)
-
-            with c1:
-                prod_date = st.date_input(
-                    "Fecha de producción",
-                    value=date.today(),
-                )
-
-                qty = st.number_input(
-                    f"Cantidad producida [{row['unidad']}]",
-                    min_value=0.01,
-                    value=float(remaining if remaining > 0 else 1.0),
-                    step=1.0,
-                )
-
-            with c2:
-                new_status = st.selectbox(
-                    "Estado después del registro",
-                    ESTADOS,
-                    index=ESTADOS.index(
-                        "En producción"
-                        if row["estado"] in ("Planificada", "En preparación")
-                        else row["estado"]
-                    ),
-                )
-
-                close_order = st.checkbox(
-                    "Marcar como finalizada",
-                    value=False,
-                )
-
-            note = st.text_area(
-                "Observación del registro"
-            )
-
-            save_prod = st.form_submit_button(
-                "Guardar producción",
-                type="primary",
-                use_container_width=True,
-            )
-
-        if save_prod:
-
-            execute(
-                """
-                INSERT INTO movimientos_produccion (
-                    orden_id,
-                    fecha,
-                    cantidad,
-                    observacion,
-                    created_at
-                )
-                VALUES (?, ?, ?, ?, ?)
-                """,
-                (
-                    int(selected_id),
-                    prod_date.isoformat(),
-                    float(qty),
-                    note.strip(),
-                    datetime.now().isoformat(timespec="seconds"),
-                ),
-            )
-
-            update_total_produced(
-                int(selected_id)
-            )
-
-            final_status = (
-                "Finalizada"
-                if close_order
-                else new_status
-            )
-
-            fecha_fin = (
-                prod_date.isoformat()
-                if final_status == "Finalizada"
-                else None
-            )
-
-            expiry_date = None
-
-            if final_status == "Finalizada":
-                shelf_months = int(
-                    row.get("vida_util_meses")
-                    if pd.notna(
-                        row.get("vida_util_meses")
-                    )
-                    else DEFAULT_SHELF_LIFE_MONTHS
-                )
-
-                expiry_date = months_after(
-                    prod_date,
-                    shelf_months,
-                ).isoformat()
-
-            execute(
-                """
-                UPDATE ordenes
-                SET estado = ?,
-                    fecha_fin = COALESCE(?, fecha_fin),
-                    fecha_vencimiento = COALESCE(?, fecha_vencimiento),
-                    updated_at = ?
-                WHERE id = ?
-                """,
-                (
-                    final_status,
-                    fecha_fin,
-                    expiry_date,
-                    datetime.now().isoformat(timespec="seconds"),
-                    int(selected_id),
-                ),
-            )
-
-            add_event(
-                int(selected_id),
-                "Producción registrada",
-                f"{qty} {row['unidad']} · Estado: {final_status}",
-            )
-
-            st.success(
-                "Producción registrada correctamente."
-            )
-            st.rerun()
-
 
 
         st.subheader("Registrar consumo real de materias primas")
