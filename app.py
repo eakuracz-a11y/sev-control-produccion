@@ -16,6 +16,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from urllib.parse import quote
 
+import numpy as np
 import pandas as pd
 import streamlit as st
 
@@ -24,7 +25,7 @@ import streamlit as st
 # CONFIGURACIÓN
 # ============================================================
 
-APP_VERSION = "V1.4"
+APP_VERSION = "V1.5"
 APP_TITLE = "SEV | Control de Producción"
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -68,6 +69,50 @@ SEV_PERSONAS = [
 ]
 
 DEFAULT_SHELF_LIFE_MONTHS = 24
+
+# ============================================================
+# FORMULACIÓN MAESTRA INICIAL · ADJUVANTE G - STEPAN
+# Fuente: formulación proporcionada por el usuario.
+# Base: 274,000 kg ≈ 300,246 L
+# Densidad teórica final: 0,913 kg/L
+# ============================================================
+
+DEFAULT_ADJ_G_FORMULA = {
+    "familia_codigo": "ADJ",
+    "producto": "Adjuvante G",
+    "version": 1,
+    "cantidad_base": 274.000,
+    "unidad_base": "kg",
+    "volumen_base_l": 300.246,
+    "densidad_teorica": 0.913,
+    "observaciones": "Formulação G Surfactante - STEPAN",
+    "items": [
+        {
+            "codigo": "II0030",
+            "nombre": "ESTER METILICO DE OLEO VEGETAL",
+            "densidad": 0.879,
+            "cantidad_kg": 220.000,
+            "cantidad_l": 250.280,
+            "porcentaje_mm": 80.0,
+        },
+        {
+            "codigo": "IA0002",
+            "nombre": "STEPGROW EP ME",
+            "densidad": 1.011,
+            "cantidad_kg": 27.000,
+            "cantidad_l": 24.000,
+            "porcentaje_mm": 10.0,
+        },
+        {
+            "codigo": "IA0006",
+            "nombre": "STEPGROW SRA-2",
+            "densidad": 1.040,
+            "cantidad_kg": 27.000,
+            "cantidad_l": 25.960,
+            "porcentaje_mm": 10.0,
+        },
+    ],
+}
 
 # Consumibles/embalajes cargados desde listado SIGA/MATA225 del 10/09/2026.
 DEFAULT_CONSUMABLES = [
@@ -540,6 +585,33 @@ def init_db():
                 f"ALTER TABLE ordenes ADD COLUMN {column_name} {column_type}"
             )
 
+    # Migración de formulaciones: densidad y volumen base.
+    cur.execute("PRAGMA table_info(formulaciones)")
+    formulation_columns = {row[1] for row in cur.fetchall()}
+
+    for column_name, column_type in [
+        ("densidad_teorica", "REAL"),
+        ("volumen_base_l", "REAL"),
+    ]:
+        if column_name not in formulation_columns:
+            cur.execute(
+                f"ALTER TABLE formulaciones ADD COLUMN {column_name} {column_type}"
+            )
+
+    # Migración de items: densidad, litros y porcentaje m/m.
+    cur.execute("PRAGMA table_info(formulacion_items)")
+    item_columns = {row[1] for row in cur.fetchall()}
+
+    for column_name, column_type in [
+        ("densidad", "REAL"),
+        ("cantidad_l", "REAL"),
+        ("porcentaje_mm", "REAL"),
+    ]:
+        if column_name not in item_columns:
+            cur.execute(
+                f"ALTER TABLE formulacion_items ADD COLUMN {column_name} {column_type}"
+            )
+
     cur.execute(
         """
         UPDATE ordenes
@@ -564,6 +636,190 @@ def init_db():
                 datetime.now().isoformat(timespec="seconds"),
             ),
         )
+
+    # ========================================================
+    # Seed de ADJUVANTE G y su formulación maestra.
+    # ========================================================
+
+    now_seed = datetime.now().isoformat(timespec="seconds")
+
+    # Asegurar familia ADJ.
+    cur.execute(
+        """
+        INSERT OR IGNORE INTO familias (
+            codigo, nombre, activo, created_at
+        )
+        VALUES ('ADJ', 'Adyuvantes', 1, ?)
+        """,
+        (now_seed,),
+    )
+
+    cur.execute(
+        "SELECT id FROM familias WHERE codigo = 'ADJ' LIMIT 1"
+    )
+    adj_family_row = cur.fetchone()
+    adj_family_id = int(adj_family_row[0]) if adj_family_row else None
+
+    # Asegurar producto Adjuvante G.
+    if adj_family_id:
+        cur.execute(
+            """
+            SELECT id
+            FROM productos
+            WHERE LOWER(nombre) = LOWER(?)
+              AND familia_id = ?
+            LIMIT 1
+            """,
+            (
+                DEFAULT_ADJ_G_FORMULA["producto"],
+                adj_family_id,
+            ),
+        )
+        product_row = cur.fetchone()
+
+        if product_row:
+            adj_g_product_id = int(product_row[0])
+        else:
+            cur.execute(
+                """
+                INSERT INTO productos (
+                    nombre,
+                    linea,
+                    familia_id,
+                    unidad,
+                    activo,
+                    created_at
+                )
+                VALUES (?, 'ADJ', ?, 'L', 1, ?)
+                """,
+                (
+                    DEFAULT_ADJ_G_FORMULA["producto"],
+                    adj_family_id,
+                    now_seed,
+                ),
+            )
+            adj_g_product_id = int(cur.lastrowid)
+
+        # Asegurar materias primas de la formulación.
+        material_ids = {}
+
+        for item in DEFAULT_ADJ_G_FORMULA["items"]:
+            cur.execute(
+                """
+                SELECT id
+                FROM materias_primas
+                WHERE UPPER(codigo) = UPPER(?)
+                LIMIT 1
+                """,
+                (item["codigo"],),
+            )
+            mp_row = cur.fetchone()
+
+            if mp_row:
+                material_id = int(mp_row[0])
+                cur.execute(
+                    """
+                    UPDATE materias_primas
+                    SET nombre = ?,
+                        unidad = 'kg',
+                        activo = 1
+                    WHERE id = ?
+                    """,
+                    (
+                        item["nombre"],
+                        material_id,
+                    ),
+                )
+            else:
+                cur.execute(
+                    """
+                    INSERT INTO materias_primas (
+                        codigo,
+                        nombre,
+                        unidad,
+                        activo,
+                        created_at
+                    )
+                    VALUES (?, ?, 'kg', 1, ?)
+                    """,
+                    (
+                        item["codigo"],
+                        item["nombre"],
+                        now_seed,
+                    ),
+                )
+                material_id = int(cur.lastrowid)
+
+            material_ids[item["codigo"]] = material_id
+
+        # Crear la V1 sólo si el producto no tiene una formulación activa.
+        cur.execute(
+            """
+            SELECT id
+            FROM formulaciones
+            WHERE producto_id = ?
+              AND activa = 1
+            ORDER BY version DESC
+            LIMIT 1
+            """,
+            (adj_g_product_id,),
+        )
+        active_formula_row = cur.fetchone()
+
+        if not active_formula_row:
+            cur.execute(
+                """
+                INSERT INTO formulaciones (
+                    producto_id,
+                    version,
+                    cantidad_base,
+                    unidad_base,
+                    observaciones,
+                    activa,
+                    created_at,
+                    densidad_teorica,
+                    volumen_base_l
+                )
+                VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)
+                """,
+                (
+                    adj_g_product_id,
+                    int(DEFAULT_ADJ_G_FORMULA["version"]),
+                    float(DEFAULT_ADJ_G_FORMULA["cantidad_base"]),
+                    DEFAULT_ADJ_G_FORMULA["unidad_base"],
+                    DEFAULT_ADJ_G_FORMULA["observaciones"],
+                    now_seed,
+                    float(DEFAULT_ADJ_G_FORMULA["densidad_teorica"]),
+                    float(DEFAULT_ADJ_G_FORMULA["volumen_base_l"]),
+                ),
+            )
+            formula_id = int(cur.lastrowid)
+
+            for item in DEFAULT_ADJ_G_FORMULA["items"]:
+                cur.execute(
+                    """
+                    INSERT INTO formulacion_items (
+                        formulacion_id,
+                        materia_prima_id,
+                        cantidad,
+                        unidad,
+                        observacion,
+                        densidad,
+                        cantidad_l,
+                        porcentaje_mm
+                    )
+                    VALUES (?, ?, ?, 'kg', ?, ?, ?, ?)
+                    """,
+                    (
+                        formula_id,
+                        material_ids[item["codigo"]],
+                        float(item["cantidad_kg"]),
+                        "Formulação G Surfactante - STEPAN",
+                        float(item["densidad"]),
+                        float(item["cantidad_l"]),
+                        float(item["porcentaje_mm"]),
+                    ),
+                )
 
     # Cargar consumibles y embalajes del listado SIGA.
     for code, description, warehouse, category, balance in DEFAULT_CONSUMABLES:
@@ -1035,7 +1291,10 @@ def get_formulation_items(formulation_id):
             mp.nombre AS materia_prima,
             fi.cantidad,
             fi.unidad,
-            fi.observacion
+            fi.observacion,
+            fi.densidad,
+            fi.cantidad_l,
+            fi.porcentaje_mm
         FROM formulacion_items fi
         JOIN materias_primas mp
           ON mp.id = fi.materia_prima_id
@@ -1047,6 +1306,15 @@ def get_formulation_items(formulation_id):
 
 
 def calculate_theoretical_consumption(order_row):
+    """
+    Calcula el consumo teórico de materias primas respetando la base
+    gravimétrica de la receta.
+
+    Para formulaciones expresadas en kg:
+    - Si la orden está en kg, escala directamente.
+    - Si la orden está en L, convierte el volumen solicitado a kg
+      usando la densidad teórica del producto.
+    """
     formulation_id = order_row.get("formulacion_id")
 
     if formulation_id is None or pd.isna(formulation_id):
@@ -1056,22 +1324,86 @@ def calculate_theoretical_consumption(order_row):
         "SELECT * FROM formulaciones WHERE id = ?",
         (int(formulation_id),),
     )
+
     if formulation.empty:
         return pd.DataFrame()
 
     formulation = formulation.iloc[0]
     items = get_formulation_items(int(formulation_id))
+
     if items.empty:
         return pd.DataFrame()
 
-    theoretical_qty = float(order_row.get("cantidad_planificada") or 0)
-    base_qty = float(formulation["cantidad_base"] or 1)
-    factor = theoretical_qty / base_qty if base_qty > 0 else 0
+    requested_qty = float(
+        order_row.get("cantidad_planificada") or 0
+    )
+    requested_unit = str(
+        order_row.get("unidad") or ""
+    ).strip()
+
+    base_qty = float(
+        formulation["cantidad_base"] or 1
+    )
+    base_unit = str(
+        formulation["unidad_base"] or ""
+    ).strip()
+
+    density = pd.to_numeric(
+        pd.Series([formulation.get("densidad_teorica")]),
+        errors="coerce",
+    ).iloc[0]
+
+    # Convertir cantidad solicitada a la unidad base de la fórmula.
+    if requested_unit == base_unit:
+        equivalent_base_qty = requested_qty
+    elif (
+        requested_unit == "L"
+        and base_unit == "kg"
+        and pd.notna(density)
+        and float(density) > 0
+    ):
+        equivalent_base_qty = requested_qty * float(density)
+    elif (
+        requested_unit == "kg"
+        and base_unit == "L"
+        and pd.notna(density)
+        and float(density) > 0
+    ):
+        equivalent_base_qty = requested_qty / float(density)
+    else:
+        equivalent_base_qty = requested_qty
+
+    factor = (
+        equivalent_base_qty / base_qty
+        if base_qty > 0
+        else 0
+    )
 
     out = items.copy()
+
     out["consumo_teorico"] = (
-        pd.to_numeric(out["cantidad"], errors="coerce").fillna(0) * factor
+        pd.to_numeric(
+            out["cantidad"],
+            errors="coerce",
+        ).fillna(0)
+        * factor
     )
+
+    out["consumo_teorico_l"] = (
+        pd.to_numeric(
+            out["cantidad_l"],
+            errors="coerce",
+        ).fillna(0)
+        * factor
+    )
+
+    out["factor_escala"] = factor
+    out["masa_objetivo_kg"] = (
+        equivalent_base_qty
+        if base_unit == "kg"
+        else np.nan
+    )
+
     return out
 
 
@@ -1480,9 +1812,21 @@ elif section == "Nueva orden":
                     )
 
                     if active_formula:
+                        formula_density = active_formula.get(
+                            "densidad_teorica"
+                        )
+
+                        density_txt = (
+                            f" · densidad {float(formula_density):.3f} kg/L"
+                            if formula_density is not None
+                            and pd.notna(formula_density)
+                            else ""
+                        )
+
                         st.success(
                             f"Formulación activa V{active_formula['version']} · "
                             f"base {active_formula['cantidad_base']} {active_formula['unidad_base']}"
+                            f"{density_txt}"
                         )
                     else:
                         st.warning(
@@ -1503,6 +1847,27 @@ elif section == "Nueva orden":
                     value=250.0,
                     step=10.0,
                 )
+
+                if active_formula:
+                    density_value = active_formula.get(
+                        "densidad_teorica"
+                    )
+
+                    if (
+                        unidad == "L"
+                        and active_formula.get("unidad_base") == "kg"
+                        and density_value is not None
+                        and pd.notna(density_value)
+                        and float(density_value) > 0
+                    ):
+                        target_mass = float(cantidad) * float(density_value)
+
+                        st.caption(
+                            f"Equivalente gravimétrico: "
+                            f"{float(cantidad):,.2f} L × "
+                            f"{float(density_value):.3f} kg/L = "
+                            f"{target_mass:,.2f} kg"
+                        )
 
             with c2:
                 fecha_orden = st.date_input(
@@ -1823,7 +2188,16 @@ elif section == "Registrar producción":
             actual_consumption = get_actual_consumption(int(selected_id))
 
             compare = theoretical_consumption[
-                ["materia_prima_id", "mp_codigo", "materia_prima", "unidad", "consumo_teorico"]
+                [
+                    "materia_prima_id",
+                    "mp_codigo",
+                    "materia_prima",
+                    "densidad",
+                    "porcentaje_mm",
+                    "unidad",
+                    "consumo_teorico",
+                    "consumo_teorico_l",
+                ]
             ].copy()
 
             if not actual_consumption.empty:
@@ -1847,19 +2221,35 @@ elif section == "Registrar producción":
 
             st.dataframe(
                 compare[
-                    ["mp_codigo", "materia_prima", "consumo_teorico", "consumo_real", "unidad", "desvio_pct"]
+                    [
+                        "mp_codigo",
+                        "materia_prima",
+                        "densidad",
+                        "porcentaje_mm",
+                        "consumo_teorico",
+                        "consumo_teorico_l",
+                        "consumo_real",
+                        "unidad",
+                        "desvio_pct",
+                    ]
                 ].rename(
                     columns={
                         "mp_codigo": "Código",
                         "materia_prima": "Materia prima",
-                        "consumo_teorico": "Teórico",
+                        "densidad": "Densidad kg/L",
+                        "porcentaje_mm": "% m/m",
+                        "consumo_teorico": "Teórico kg",
+                        "consumo_teorico_l": "Teórico L",
                         "consumo_real": "Real consumido",
                         "unidad": "Unidad",
                         "desvio_pct": "Desvío %",
                     }
                 ).style.format(
                     {
-                        "Teórico": "{:.3f}",
+                        "Densidad kg/L": "{:.3f}",
+                        "% m/m": "{:.1f}%",
+                        "Teórico kg": "{:.3f}",
+                        "Teórico L": "{:.3f}",
                         "Real consumido": "{:.3f}",
                         "Desvío %": "{:+.1f}%",
                     },
@@ -3270,9 +3660,18 @@ elif section == "Formulaciones":
         active_formula = get_active_formulation(int(selected_product_id))
 
         if active_formula:
+            formula_density = active_formula.get(
+                "densidad_teorica"
+            )
+            formula_volume = active_formula.get(
+                "volumen_base_l"
+            )
+
             st.success(
                 f"Formulación activa V{active_formula['version']} · "
-                f"Base {active_formula['cantidad_base']} {active_formula['unidad_base']}"
+                f"Base {active_formula['cantidad_base']} {active_formula['unidad_base']} · "
+                f"Volumen {float(formula_volume):.3f} L · "
+                f"Densidad teórica {float(formula_density):.3f} kg/L"
             )
 
             items = get_formulation_items(int(active_formula["id"]))
@@ -3280,13 +3679,25 @@ elif section == "Formulaciones":
             if not items.empty:
                 st.dataframe(
                     items[
-                        ["mp_codigo", "materia_prima", "cantidad", "unidad", "observacion"]
+                        [
+                            "mp_codigo",
+                            "materia_prima",
+                            "densidad",
+                            "cantidad",
+                            "cantidad_l",
+                            "porcentaje_mm",
+                            "unidad",
+                            "observacion",
+                        ]
                     ].rename(
                         columns={
                             "mp_codigo": "Código",
                             "materia_prima": "Materia prima",
-                            "cantidad": "Cantidad receta",
-                            "unidad": "Unidad",
+                            "densidad": "Densidad kg/L",
+                            "cantidad": "Cantidad kg",
+                            "cantidad_l": "Cantidad L",
+                            "porcentaje_mm": "% m/m",
+                            "unidad": "Unidad base",
                             "observacion": "Observación",
                         }
                     ),
@@ -3303,25 +3714,39 @@ elif section == "Formulaciones":
             previous_version = int(active_formula["version"]) if active_formula else 0
 
             with st.form(f"new_formula_{selected_product_id}"):
-                f1, f2 = st.columns(2)
+                f1, f2, f3, f4 = st.columns(4)
 
                 with f1:
                     base_qty = st.number_input(
-                        "Cantidad base de receta",
+                        "Cantidad base",
                         min_value=0.01,
-                        value=100.0,
-                        step=10.0,
+                        value=274.0,
+                        step=1.0,
                     )
 
                 with f2:
                     base_unit = st.selectbox(
-                        "Unidad del producto base",
-                        UNIDADES,
-                        index=(
-                            UNIDADES.index(selected_product["unidad"])
-                            if selected_product["unidad"] in UNIDADES
-                            else 0
-                        ),
+                        "Unidad base",
+                        ["kg", "L"],
+                        index=0,
+                    )
+
+                with f3:
+                    formula_density = st.number_input(
+                        "Densidad teórica [kg/L]",
+                        min_value=0.001,
+                        value=0.913,
+                        step=0.001,
+                        format="%.3f",
+                    )
+
+                with f4:
+                    formula_volume = st.number_input(
+                        "Volumen base [L]",
+                        min_value=0.001,
+                        value=300.246,
+                        step=0.001,
+                        format="%.3f",
                     )
 
                 formula_obs = st.text_area("Observaciones de la formulación")
@@ -3342,9 +3767,10 @@ elif section == "Formulaciones":
                     """
                     INSERT INTO formulaciones (
                         producto_id, version, cantidad_base, unidad_base,
-                        observaciones, activa, created_at
+                        observaciones, activa, created_at,
+                        densidad_teorica, volumen_base_l
                     )
-                    VALUES (?, ?, ?, ?, ?, 1, ?)
+                    VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)
                     """,
                     (
                         int(selected_product_id),
@@ -3353,6 +3779,8 @@ elif section == "Formulaciones":
                         base_unit,
                         formula_obs.strip(),
                         datetime.now().isoformat(timespec="seconds"),
+                        float(formula_density),
+                        float(formula_volume),
                     ),
                 )
 
@@ -3384,7 +3812,7 @@ elif section == "Formulaciones":
 
                         with st.form(f"add_formula_item_{editing_formula_id}"):
 
-                            i1, i2 = st.columns(2)
+                            i1, i2, i3, i4 = st.columns(4)
 
                             with i1:
                                 material_id = st.selectbox(
@@ -3401,12 +3829,40 @@ elif section == "Formulaciones":
                             ].iloc[0]
 
                             with i2:
+                                material_density = st.number_input(
+                                    "Densidad [kg/L]",
+                                    min_value=0.001,
+                                    value=1.000,
+                                    step=0.001,
+                                    format="%.3f",
+                                )
+
+                            with i3:
                                 material_qty = st.number_input(
-                                    f"Cantidad [{selected_material['unidad']}]",
+                                    "Cantidad [kg]",
                                     min_value=0.0,
                                     value=0.0,
                                     step=0.1,
                                 )
+
+                            with i4:
+                                material_percent = st.number_input(
+                                    "% m/m",
+                                    min_value=0.0,
+                                    max_value=100.0,
+                                    value=0.0,
+                                    step=0.1,
+                                )
+
+                            material_liters = (
+                                float(material_qty) / float(material_density)
+                                if float(material_density) > 0
+                                else 0.0
+                            )
+
+                            st.caption(
+                                f"Volumen calculado: {material_liters:.3f} L"
+                            )
 
                             material_note = st.text_input("Observación / función")
 
@@ -3437,16 +3893,20 @@ elif section == "Formulaciones":
                                     """
                                     INSERT INTO formulacion_items (
                                         formulacion_id, materia_prima_id,
-                                        cantidad, unidad, observacion
+                                        cantidad, unidad, observacion,
+                                        densidad, cantidad_l, porcentaje_mm
                                     )
-                                    VALUES (?, ?, ?, ?, ?)
+                                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                                     """,
                                     (
                                         int(editing_formula_id),
                                         int(material_id),
                                         float(material_qty),
-                                        str(selected_material["unidad"]),
+                                        "kg",
                                         material_note.strip(),
+                                        float(material_density),
+                                        float(material_liters),
+                                        float(material_percent),
                                     ),
                                 )
                                 st.success("Materia prima agregada.")
@@ -3459,13 +3919,25 @@ elif section == "Formulaciones":
                         if not current_items.empty:
                             st.dataframe(
                                 current_items[
-                                    ["mp_codigo", "materia_prima", "cantidad", "unidad", "observacion"]
+                                    [
+                                        "mp_codigo",
+                                        "materia_prima",
+                                        "densidad",
+                                        "cantidad",
+                                        "cantidad_l",
+                                        "porcentaje_mm",
+                                        "unidad",
+                                        "observacion",
+                                    ]
                                 ].rename(
                                     columns={
                                         "mp_codigo": "Código",
                                         "materia_prima": "Materia prima",
-                                        "cantidad": "Cantidad receta",
-                                        "unidad": "Unidad",
+                                        "densidad": "Densidad kg/L",
+                                        "cantidad": "Cantidad kg",
+                                        "cantidad_l": "Cantidad L",
+                                        "porcentaje_mm": "% m/m",
+                                        "unidad": "Unidad base",
                                         "observacion": "Observación",
                                     }
                                 ),
@@ -3644,5 +4116,5 @@ elif section == "Personas y correos":
 st.divider()
 st.caption(
     f"SEV | Control de Producción · {APP_VERSION} · "
-    "Órdenes, lotes, formulaciones, materias primas, consumibles y trazabilidad"
+    "Órdenes, lotes, formulaciones gravimétricas, materias primas, consumibles y trazabilidad"
 )
