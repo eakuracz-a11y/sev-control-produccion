@@ -26,7 +26,7 @@ import streamlit as st
 # CONFIGURACIÓN
 # ============================================================
 
-APP_VERSION = "V1.11"
+APP_VERSION = "V1.12"
 APP_TITLE = "SEV | Control de Producción"
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -1586,6 +1586,92 @@ def calculate_theoretical_consumption(order_row):
 
     return out
 
+
+
+
+def save_order_admin_changes(order_id, values):
+    """
+    Guarda todos los campos editables de una orden en una sola transacción,
+    verifica rowcount y vuelve a leer el registro para confirmar persistencia.
+    """
+    conn = get_conn()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            UPDATE ordenes
+            SET linea = ?,
+                producto = ?,
+                producto_id = ?,
+                formulacion_id = ?,
+                cantidad_planificada = ?,
+                cantidad_real_producida = ?,
+                cantidad_producida = ?,
+                unidad = ?,
+                fecha_orden = ?,
+                fecha_inicio = ?,
+                fecha_fin = ?,
+                fecha_vencimiento = ?,
+                vida_util_meses = ?,
+                responsable = ?,
+                responsable_email = ?,
+                estado = ?,
+                prioridad = ?,
+                observaciones = ?,
+                updated_at = ?
+            WHERE id = ?
+            """,
+            (
+                values["linea"],
+                values["producto"],
+                int(values["producto_id"]),
+                (
+                    int(values["formulacion_id"])
+                    if values["formulacion_id"] is not None
+                    else None
+                ),
+                float(values["cantidad_planificada"]),
+                float(values["cantidad_real_producida"]),
+                float(values["cantidad_real_producida"]),
+                values["unidad"],
+                values["fecha_orden"],
+                values["fecha_inicio"],
+                values["fecha_fin"],
+                values["fecha_vencimiento"],
+                int(values["vida_util_meses"]),
+                values["responsable"],
+                values["responsable_email"],
+                values["estado"],
+                values["prioridad"],
+                values["observaciones"],
+                datetime.now().isoformat(timespec="seconds"),
+                int(order_id),
+            ),
+        )
+
+        if cur.rowcount != 1:
+            conn.rollback()
+            return False, None, f"No se actualizó la orden. Filas modificadas: {cur.rowcount}"
+
+        conn.commit()
+
+        row = conn.execute(
+            "SELECT * FROM ordenes WHERE id = ?",
+            (int(order_id),),
+        ).fetchone()
+
+        saved = dict(row) if row else None
+
+        if not saved:
+            return False, None, "La orden no pudo volver a leerse después del guardado."
+
+        return True, saved, "Cambios guardados correctamente."
+
+    except Exception as exc:
+        conn.rollback()
+        return False, None, str(exc)
+    finally:
+        conn.close()
 
 
 def get_order_by_id(order_id):
@@ -3366,9 +3452,21 @@ elif section == "Órdenes y lotes":
 
         if selected_order:
 
-            detail = view[
-                view["id"] == selected_order
-            ].iloc[0]
+            detail_db_top = get_order_by_id(int(selected_order))
+            if detail_db_top:
+                detail = pd.Series(detail_db_top)
+            else:
+                detail = view[
+                    view["id"] == selected_order
+                ].iloc[0]
+
+            # Mensaje persistente después del rerun de un guardado.
+            saved_notice = st.session_state.pop(
+                "order_saved_notice",
+                None,
+            )
+            if saved_notice and int(saved_notice.get("order_id", -1)) == int(selected_order):
+                st.success(saved_notice.get("message", "Cambios guardados."))
 
             c1, c2, c3, c4 = st.columns(4)
 
@@ -3386,7 +3484,11 @@ elif section == "Órdenes y lotes":
             c3.metric(
                 "Producido",
                 fmt_qty(
-                    detail["cantidad_producida"],
+                    (
+                        detail["cantidad_real_producida"]
+                        if pd.notna(detail.get("cantidad_real_producida"))
+                        else detail["cantidad_producida"]
+                    ),
                     detail["unidad"],
                 ),
             )
@@ -3523,6 +3625,36 @@ elif section == "Órdenes y lotes":
                             f"Fecha límite obligatoria de cierre: "
                             f"{close_deadline.strftime('%d/%m/%Y')}."
                         )
+
+                st.markdown("#### Datos actuales guardados")
+                s1, s2, s3, s4 = st.columns(4)
+
+                s1.metric(
+                    "Cantidad teórica",
+                    fmt_qty(
+                        detail.get("cantidad_planificada") or 0,
+                        detail.get("unidad") or "",
+                    ),
+                )
+                s2.metric(
+                    "Cantidad real",
+                    fmt_qty(
+                        (
+                            detail.get("cantidad_real_producida")
+                            if pd.notna(detail.get("cantidad_real_producida"))
+                            else 0
+                        ),
+                        detail.get("unidad") or "",
+                    ),
+                )
+                s3.metric(
+                    "Finalización",
+                    detail.get("fecha_fin") or "Sin fecha",
+                )
+                s4.metric(
+                    "Vencimiento",
+                    detail.get("fecha_vencimiento") or "Sin fecha",
+                )
 
                 people_admin = get_people(active_only=True)
                 families_admin = get_families(active_only=True)
@@ -3670,17 +3802,24 @@ elif section == "Órdenes y lotes":
                         )
 
                         register_finish = st.checkbox(
-                            "Registrar fecha de finalización",
+                            "La orden tiene fecha de finalización",
                             value=pd.notna(current_finish),
+                            help=(
+                                "Marcá esta opción para guardar la fecha de finalización. "
+                                "La fecha es editable incluso si la orden todavía está abierta."
+                            ),
                         )
 
-                        # Siempre editable: el checkbox decide si se guarda o queda vacía.
                         edit_finish = st.date_input(
                             "Fecha de finalización",
                             value=(
                                 current_finish.date()
                                 if pd.notna(current_finish)
                                 else date.today()
+                            ),
+                            help=(
+                                "Debe ser igual o anterior al último día del mes "
+                                "en que se creó la orden."
                             ),
                         )
 
@@ -3810,7 +3949,12 @@ elif section == "Órdenes y lotes":
                         proposed_finish,
                     )
 
-                    if not valid_finish:
+                    if edit_status == "Finalizada" and not register_finish:
+                        st.error(
+                            "Para guardar el estado Finalizada debés marcar "
+                            "'La orden tiene fecha de finalización'."
+                        )
+                    elif not valid_finish:
                         st.error(
                             f"No se guardaron los cambios. La fecha máxima de cierre es "
                             f"{deadline_check.strftime('%d/%m/%Y')}."
@@ -3849,65 +3993,48 @@ elif section == "Órdenes y lotes":
                             else None
                         )
 
-                        execute(
-                            """
-                            UPDATE ordenes
-                            SET linea = ?,
-                                producto = ?,
-                                producto_id = ?,
-                                formulacion_id = ?,
-                                cantidad_planificada = ?,
-                                cantidad_real_producida = ?,
-                                cantidad_producida = ?,
-                                unidad = ?,
-                                fecha_orden = ?,
-                                fecha_inicio = ?,
-                                fecha_fin = ?,
-                                fecha_vencimiento = ?,
-                                vida_util_meses = ?,
-                                responsable = ?,
-                                responsable_email = ?,
-                                estado = ?,
-                                prioridad = ?,
-                                observaciones = ?,
-                                updated_at = ?
-                            WHERE id = ?
-                            """,
-                            (
-                                edit_family,
-                                str(selected_product["nombre"]),
-                                int(edit_product_id),
-                                (
-                                    int(edit_formula_id)
-                                    if edit_formula_id is not None
-                                    else None
-                                ),
-                                float(edit_planned),
-                                float(edit_actual),
-                                float(edit_actual),
-                                edit_unit,
-                                edit_order_date.isoformat(),
-                                edit_start.isoformat(),
-                                (
-                                    final_date_value.isoformat()
-                                    if final_date_value
-                                    else None
-                                ),
-                                (
-                                    expiry_value.isoformat()
-                                    if expiry_value
-                                    else None
-                                ),
-                                int(edit_shelf),
-                                str(selected_resp["nombre"]),
-                                str(selected_resp["email"]),
-                                edit_status,
-                                edit_priority,
-                                edit_obs.strip(),
-                                datetime.now().isoformat(timespec="seconds"),
-                                int(selected_order),
+                        save_values = {
+                            "linea": edit_family,
+                            "producto": str(selected_product["nombre"]),
+                            "producto_id": int(edit_product_id),
+                            "formulacion_id": (
+                                int(edit_formula_id)
+                                if edit_formula_id is not None
+                                else None
                             ),
+                            "cantidad_planificada": float(edit_planned),
+                            "cantidad_real_producida": float(edit_actual),
+                            "unidad": edit_unit,
+                            "fecha_orden": edit_order_date.isoformat(),
+                            "fecha_inicio": edit_start.isoformat(),
+                            "fecha_fin": (
+                                final_date_value.isoformat()
+                                if final_date_value
+                                else None
+                            ),
+                            "fecha_vencimiento": (
+                                expiry_value.isoformat()
+                                if expiry_value
+                                else None
+                            ),
+                            "vida_util_meses": int(edit_shelf),
+                            "responsable": str(selected_resp["nombre"]),
+                            "responsable_email": str(selected_resp["email"]),
+                            "estado": edit_status,
+                            "prioridad": edit_priority,
+                            "observaciones": edit_obs.strip(),
+                        }
+
+                        saved_ok, saved, save_msg = save_order_admin_changes(
+                            int(selected_order),
+                            save_values,
                         )
+
+                        if not saved_ok:
+                            st.error(
+                                f"No se pudieron guardar los cambios: {save_msg}"
+                            )
+                            st.stop()
 
                         stock_ok, stock_msg = sync_order_material_reservation(
                             int(selected_order)
@@ -3923,27 +4050,27 @@ elif section == "Órdenes y lotes":
                             ),
                         )
 
-                        # Verificación real de guardado antes de rerun.
-                        saved = get_order_by_id(int(selected_order))
-
+                        # Confirmación del guardado con los datos realmente leídos de SQLite.
                         if saved:
-                            st.success(
-                                "Cambios guardados correctamente. "
+                            message = (
+                                "Cambios guardados y confirmados en la base. "
+                                f"Planificado: {float(saved.get('cantidad_planificada') or 0):,.2f} {saved.get('unidad') or ''} · "
+                                f"Real: {float(saved.get('cantidad_real_producida') or 0):,.2f} {saved.get('unidad') or ''} · "
                                 f"Inicio: {saved.get('fecha_inicio') or '—'} · "
                                 f"Finalización: {saved.get('fecha_fin') or '—'} · "
                                 f"Vencimiento: {saved.get('fecha_vencimiento') or '—'}."
                             )
 
-                            if stock_ok and edit_formula_id is not None:
-                                st.success(
-                                    "La formulación quedó asignada y el stock teórico "
-                                    "de materias primas fue descontado/sincronizado."
-                                )
-                            elif not stock_ok:
-                                st.warning(
-                                    f"Los datos se guardaron, pero hubo un problema con stock: {stock_msg}"
-                                )
+                            if edit_formula_id is not None:
+                                if stock_ok:
+                                    message += " · Fórmula y stock sincronizados."
+                                else:
+                                    message += f" · ATENCIÓN stock: {stock_msg}"
 
+                            st.session_state["order_saved_notice"] = {
+                                "order_id": int(selected_order),
+                                "message": message,
+                            }
                             st.session_state["edit_order_id"] = int(selected_order)
                             st.rerun()
 
