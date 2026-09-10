@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import sqlite3
+import calendar
 import smtplib
 from email.message import EmailMessage
 from datetime import date, datetime, timedelta
@@ -25,7 +26,7 @@ import streamlit as st
 # CONFIGURACIÓN
 # ============================================================
 
-APP_VERSION = "V1.8"
+APP_VERSION = "V1.10"
 APP_TITLE = "SEV | Control de Producción"
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -666,6 +667,22 @@ def init_db():
 
     cur.execute(
         """
+        CREATE TABLE IF NOT EXISTS reservas_materias_primas (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            orden_id INTEGER NOT NULL,
+            materia_prima_id INTEGER NOT NULL,
+            cantidad_teorica REAL NOT NULL DEFAULT 0,
+            unidad TEXT NOT NULL DEFAULT 'kg',
+            updated_at TEXT NOT NULL,
+            UNIQUE(orden_id, materia_prima_id),
+            FOREIGN KEY (orden_id) REFERENCES ordenes(id),
+            FOREIGN KEY (materia_prima_id) REFERENCES materias_primas(id)
+        )
+        """
+    )
+
+    cur.execute(
+        """
         CREATE TABLE IF NOT EXISTS consumos_materias_primas (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             orden_id INTEGER NOT NULL,
@@ -1181,6 +1198,38 @@ def get_people(active_only=True):
     )
 
 
+
+def month_end(d: date) -> date:
+    last_day = calendar.monthrange(d.year, d.month)[1]
+    return date(d.year, d.month, last_day)
+
+
+def get_order_close_deadline(order_row):
+    raw = order_row.get("fecha_orden")
+    if not raw:
+        return None
+    d = pd.to_datetime(raw, errors="coerce")
+    if pd.isna(d):
+        return None
+    return month_end(d.date())
+
+
+def is_order_close_overdue(order_row, today_value=None):
+    today_value = today_value or date.today()
+    deadline = get_order_close_deadline(order_row)
+    if deadline is None:
+        return False
+    status = str(order_row.get("estado") or "")
+    return status not in ("Finalizada", "Cancelada") and today_value > deadline
+
+
+def validate_finish_date(order_row, finish_date):
+    deadline = get_order_close_deadline(order_row)
+    if finish_date is None or deadline is None:
+        return True, deadline
+    return finish_date <= deadline, deadline
+
+
 def months_after(start_date: date, months: int) -> date:
     """Suma meses manteniendo el día cuando es posible."""
     months = int(months)
@@ -1538,6 +1587,143 @@ def calculate_theoretical_consumption(order_row):
     return out
 
 
+
+def get_order_by_id(order_id):
+    df = fetch_df(
+        "SELECT * FROM ordenes WHERE id = ?",
+        (int(order_id),),
+    )
+    return None if df.empty else df.iloc[0].to_dict()
+
+
+def sync_order_material_reservation(order_id):
+    """
+    Sincroniza el descuento teórico de materias primas para una orden.
+
+    - Si se asigna una fórmula, descuenta el consumo teórico del stock.
+    - Si cambia la cantidad o la fórmula, descuenta/devuelve sólo la diferencia.
+    - Si se vuelve a guardar sin cambios, NO vuelve a descontar.
+    - Si se quita la fórmula, devuelve la reserva anterior al stock.
+    """
+    order = get_order_by_id(order_id)
+    if not order:
+        return False, "Orden no encontrada."
+
+    theoretical = calculate_theoretical_consumption(order)
+
+    desired = {}
+    if not theoretical.empty:
+        for _, r in theoretical.iterrows():
+            desired[int(r["materia_prima_id"])] = {
+                "qty": float(r["consumo_teorico"] or 0),
+                "unit": str(r.get("unidad") or "kg"),
+            }
+
+    conn = get_conn()
+    try:
+        cur = conn.cursor()
+
+        current_rows = cur.execute(
+            """
+            SELECT materia_prima_id, cantidad_teorica, unidad
+            FROM reservas_materias_primas
+            WHERE orden_id = ?
+            """,
+            (int(order_id),),
+        ).fetchall()
+
+        current = {
+            int(r["materia_prima_id"]): {
+                "qty": float(r["cantidad_teorica"] or 0),
+                "unit": str(r["unidad"] or "kg"),
+            }
+            for r in current_rows
+        }
+
+        all_ids = set(current) | set(desired)
+        now = datetime.now().isoformat(timespec="seconds")
+
+        for mp_id in all_ids:
+            old_qty = current.get(mp_id, {}).get("qty", 0.0)
+            new_qty = desired.get(mp_id, {}).get("qty", 0.0)
+            delta = new_qty - old_qty
+
+            if abs(delta) > 1e-9:
+                # delta positivo = consumir/descontar más
+                # delta negativo = devolver stock
+                cur.execute(
+                    """
+                    UPDATE materias_primas
+                    SET saldo_actual = COALESCE(saldo_actual, 0) - ?
+                    WHERE id = ?
+                    """,
+                    (float(delta), int(mp_id)),
+                )
+
+            if mp_id in desired:
+                cur.execute(
+                    """
+                    INSERT INTO reservas_materias_primas (
+                        orden_id,
+                        materia_prima_id,
+                        cantidad_teorica,
+                        unidad,
+                        updated_at
+                    )
+                    VALUES (?, ?, ?, ?, ?)
+                    ON CONFLICT(orden_id, materia_prima_id)
+                    DO UPDATE SET
+                        cantidad_teorica = excluded.cantidad_teorica,
+                        unidad = excluded.unidad,
+                        updated_at = excluded.updated_at
+                    """,
+                    (
+                        int(order_id),
+                        int(mp_id),
+                        float(new_qty),
+                        desired[mp_id]["unit"],
+                        now,
+                    ),
+                )
+            else:
+                cur.execute(
+                    """
+                    DELETE FROM reservas_materias_primas
+                    WHERE orden_id = ?
+                      AND materia_prima_id = ?
+                    """,
+                    (int(order_id), int(mp_id)),
+                )
+
+        conn.commit()
+        return True, "Stock teórico sincronizado."
+    except Exception as exc:
+        conn.rollback()
+        return False, str(exc)
+    finally:
+        conn.close()
+
+
+def get_order_reserved_materials(order_id):
+    return fetch_df(
+        """
+        SELECT
+            r.materia_prima_id,
+            COALESCE(mp.codigo_totvs, mp.codigo) AS codigo_totvs,
+            mp.nombre AS materia_prima,
+            r.cantidad_teorica,
+            r.unidad,
+            mp.saldo_actual
+        FROM reservas_materias_primas r
+        JOIN materias_primas mp
+          ON mp.id = r.materia_prima_id
+        WHERE r.orden_id = ?
+        ORDER BY COALESCE(mp.codigo_totvs, mp.codigo), mp.nombre
+        """,
+        (int(order_id),),
+    )
+
+
 def get_actual_consumption(order_id):
     return fetch_df(
         """
@@ -1572,6 +1758,9 @@ def production_variance(theoretical, actual):
 
 
 def lot_status_label(row):
+    if is_order_close_overdue(row):
+        return "ERROR CIERRE"
+
     status = str(row.get("estado") or "")
     if status == "Finalizada":
         return "CERRADA"
@@ -1586,6 +1775,7 @@ def lot_status_label(row):
 
 def lot_status_color(status):
     return {
+        "ERROR CIERRE": "#b91c1c",
         "CERRADA": "#166534",
         "CANCELADA": "#991b1b",
         "EN PRODUCCIÓN": "#1d4ed8",
@@ -1760,7 +1950,13 @@ if section == "Tablero":
         expiring_90 = 0
         expired = 0
 
-    c1, c2, c3, c4, c5, c6 = st.columns(6)
+    close_errors = (
+        int(orders.apply(lambda r: is_order_close_overdue(r), axis=1).sum())
+        if not orders.empty
+        else 0
+    )
+
+    c1, c2, c3, c4, c5, c6, c7 = st.columns(7)
 
     c1.metric("Órdenes totales", total_orders)
     c2.metric("Órdenes activas", active_orders)
@@ -1768,6 +1964,13 @@ if section == "Tablero":
     c4.metric("Cantidad producida", f"{total_qty:,.1f}".replace(",", "."))
     c5.metric("Vencen ≤ 90 días", expiring_90)
     c6.metric("Vencidos", expired)
+    c7.metric("Errores de cierre", close_errors)
+
+    if close_errors > 0:
+        st.error(
+            f"⚠️ Hay {close_errors} orden(es) abiertas fuera del mes de creación. "
+            "Se consideran ERROR DE CIERRE."
+        )
 
     st.subheader("Producción en curso")
 
@@ -1856,6 +2059,15 @@ if section == "Tablero":
             "Prioridad",
         ]
 
+        board["Fecha límite cierre"] = orders.apply(
+            lambda r: (
+                get_order_close_deadline(r).isoformat()
+                if get_order_close_deadline(r)
+                else None
+            ),
+            axis=1,
+        )
+
         board["Situación"] = orders.apply(
             lot_status_label,
             axis=1,
@@ -1863,6 +2075,7 @@ if section == "Tablero":
 
         def _status_style(value):
             styles = {
+                "ERROR CIERRE": "background-color:#fee2e2;color:#b91c1c;font-weight:800;",
                 "CERRADA": "background-color:#dcfce7;color:#166534;font-weight:700;",
                 "CANCELADA": "background-color:#fee2e2;color:#991b1b;font-weight:700;",
                 "EN PRODUCCIÓN": "background-color:#dbeafe;color:#1d4ed8;font-weight:700;",
@@ -2142,9 +2355,13 @@ elif section == "Nueva orden":
                 fecha_orden,
             )
 
+            close_deadline_preview = month_end(fecha_orden)
+
             st.info(
                 f"Orden propuesta: **{order_preview}**  ·  "
-                f"Lote propuesto: **{lot_preview}**"
+                f"Lote propuesto: **{lot_preview}**  ·  "
+                f"Cierre obligatorio máximo: "
+                f"**{close_deadline_preview.strftime('%d/%m/%Y')}**"
             )
 
             submitted = st.form_submit_button(
@@ -2216,6 +2433,21 @@ elif section == "Nueva orden":
                 "Orden creada",
                 f"{order_code} · {lot_code} · {producto}",
             )
+
+            stock_ok, stock_msg = sync_order_material_reservation(
+                int(order_id)
+            )
+
+            if stock_ok:
+                add_event(
+                    int(order_id),
+                    "Stock teórico reservado",
+                    "Descuento automático según formulación activa y cantidad teórica.",
+                )
+            else:
+                st.warning(
+                    f"La orden fue creada, pero no se pudo sincronizar el stock: {stock_msg}"
+                )
 
             created_order = fetch_df(
                 """
@@ -2580,6 +2812,10 @@ elif section == "Registrar producción":
 
 
         st.subheader("Registrar consumo real de materias primas")
+        st.caption(
+            "El stock se descuenta por la formulación teórica asignada a la orden. "
+            "Este registro documenta el consumo real y permite comparar desvíos sin duplicar el descuento."
+        )
 
         theoretical_consumption = calculate_theoretical_consumption(row)
 
@@ -3034,6 +3270,11 @@ elif section == "Órdenes y lotes":
                 st.divider()
                 st.subheader("Administración del lote")
 
+                # Volver a consultar la BD para no editar datos viejos del dataframe.
+                detail_db = get_order_by_id(int(selected_order))
+                if detail_db:
+                    detail = pd.Series(detail_db)
+
                 current_status_label = lot_status_label(detail)
                 current_status_color = lot_status_color(current_status_label)
 
@@ -3048,136 +3289,206 @@ elif section == "Órdenes y lotes":
                     unsafe_allow_html=True,
                 )
 
+                close_deadline = get_order_close_deadline(detail)
 
-                people_admin = get_people(
-                    active_only=True
+                st.caption(
+                    f"Orden: {detail['orden_codigo']} · Lote: {detail['lote_codigo']} · "
+                    "Los identificadores se mantienen fijos para conservar la trazabilidad."
                 )
 
-                current_resp_email = str(
-                    detail.get(
-                        "responsable_email"
-                    ) or ""
-                )
+                if close_deadline:
+                    if is_order_close_overdue(detail):
+                        st.error(
+                            f"ERROR DE CIERRE: esta orden debía cerrarse como máximo el "
+                            f"{close_deadline.strftime('%d/%m/%Y')} y continúa abierta."
+                        )
+                    else:
+                        st.info(
+                            f"Fecha límite obligatoria de cierre: "
+                            f"{close_deadline.strftime('%d/%m/%Y')}."
+                        )
 
+                people_admin = get_people(active_only=True)
+                families_admin = get_families(active_only=True)
+                products_admin = get_products(active_only=True)
+
+                current_resp_email = str(detail.get("responsable_email") or "")
                 current_person_match = people_admin[
-                    people_admin[
-                        "email"
-                    ].astype(str)
-                    == current_resp_email
+                    people_admin["email"].astype(str) == current_resp_email
                 ]
 
-                if current_person_match.empty:
-                    default_resp_id = int(
-                        people_admin.iloc[0][
-                            "id"
-                        ]
-                    )
-                else:
-                    default_resp_id = int(
-                        current_person_match.iloc[0][
-                            "id"
-                        ]
-                    )
+                default_resp_id = (
+                    int(current_person_match.iloc[0]["id"])
+                    if not current_person_match.empty
+                    else int(people_admin.iloc[0]["id"])
+                )
 
-                admin_person_ids = people_admin[
-                    "id"
-                ].astype(int).tolist()
+                family_codes = families_admin["codigo"].astype(str).tolist()
+                current_family = str(detail.get("linea") or "")
+                if current_family not in family_codes and family_codes:
+                    current_family = family_codes[0]
 
-                with st.form(
-                    f"admin_edit_lot_{selected_order}"
-                ):
+                current_product_id = (
+                    int(detail["producto_id"])
+                    if pd.notna(detail.get("producto_id"))
+                    else None
+                )
 
-                    e1, e2 = st.columns(2)
+                current_finish = pd.to_datetime(
+                    detail.get("fecha_fin"),
+                    errors="coerce",
+                )
+
+                current_order_date = pd.to_datetime(
+                    detail.get("fecha_orden"),
+                    errors="coerce",
+                )
+
+                current_start = pd.to_datetime(
+                    detail.get("fecha_inicio"),
+                    errors="coerce",
+                )
+
+                with st.form(f"admin_edit_lot_{selected_order}"):
+
+                    e1, e2, e3 = st.columns(3)
 
                     with e1:
+                        edit_family = st.selectbox(
+                            "Familia",
+                            options=family_codes,
+                            index=(
+                                family_codes.index(current_family)
+                                if current_family in family_codes
+                                else 0
+                            ),
+                            format_func=lambda code: (
+                                f"{code} · "
+                                f"{families_admin.loc[families_admin['codigo'] == code, 'nombre'].iloc[0]}"
+                            ),
+                        )
 
-                        edit_product = st.text_input(
+                        family_product_rows = products_admin[
+                            products_admin["familia_codigo"].astype(str) == edit_family
+                        ].copy()
+
+                        family_product_ids = (
+                            family_product_rows["id"].astype(int).tolist()
+                            if not family_product_rows.empty
+                            else []
+                        )
+
+                        if current_product_id not in family_product_ids:
+                            current_product_id_for_select = (
+                                family_product_ids[0]
+                                if family_product_ids
+                                else None
+                            )
+                        else:
+                            current_product_id_for_select = current_product_id
+
+                        edit_product_id = st.selectbox(
                             "Producto",
-                            value=str(
-                                detail["producto"]
+                            options=family_product_ids,
+                            index=(
+                                family_product_ids.index(current_product_id_for_select)
+                                if current_product_id_for_select in family_product_ids
+                                else 0
+                            ),
+                            format_func=lambda pid: (
+                                family_product_rows.loc[
+                                    family_product_rows["id"] == pid,
+                                    "nombre",
+                                ].iloc[0]
+                            ),
+                            disabled=not family_product_ids,
+                        )
+
+                        edit_unit_options = ["L", "kg", "unidades"]
+                        current_unit = str(detail.get("unidad") or "L")
+                        edit_unit = st.selectbox(
+                            "Unidad",
+                            edit_unit_options,
+                            index=(
+                                edit_unit_options.index(current_unit)
+                                if current_unit in edit_unit_options
+                                else 0
                             ),
                         )
 
                         edit_planned = st.number_input(
-                            "Cantidad planificada",
+                            "Cantidad teórica / planificada",
                             min_value=0.01,
+                            value=float(detail["cantidad_planificada"]),
+                            step=1.0,
+                        )
+
+                        edit_actual = st.number_input(
+                            "Cantidad real producida",
+                            min_value=0.0,
                             value=float(
-                                detail[
-                                    "cantidad_planificada"
-                                ]
+                                detail.get("cantidad_real_producida")
+                                if pd.notna(detail.get("cantidad_real_producida"))
+                                else 0
                             ),
                             step=1.0,
+                        )
+
+                    with e2:
+                        edit_order_date = st.date_input(
+                            "Fecha de orden",
+                            value=(
+                                current_order_date.date()
+                                if pd.notna(current_order_date)
+                                else date.today()
+                            ),
                         )
 
                         edit_start = st.date_input(
                             "Fecha de inicio",
                             value=(
-                                pd.to_datetime(
-                                    detail["fecha_inicio"],
-                                    errors="coerce",
-                                ).date()
-                                if pd.notna(
-                                    pd.to_datetime(
-                                        detail["fecha_inicio"],
-                                        errors="coerce",
-                                    )
-                                )
+                                current_start.date()
+                                if pd.notna(current_start)
                                 else date.today()
                             ),
                         )
 
-                        current_finish = pd.to_datetime(
-                            detail.get("fecha_fin"),
-                            errors="coerce",
+                        register_finish = st.checkbox(
+                            "Registrar fecha de finalización",
+                            value=pd.notna(current_finish),
                         )
 
-                        has_finish = st.checkbox(
-                            "Tiene fecha de finalización",
-                            value=pd.notna(
-                                current_finish
-                            ),
-                        )
-
+                        # Siempre editable: el checkbox decide si se guarda o queda vacía.
                         edit_finish = st.date_input(
                             "Fecha de finalización",
                             value=(
                                 current_finish.date()
-                                if pd.notna(
-                                    current_finish
-                                )
+                                if pd.notna(current_finish)
                                 else date.today()
                             ),
-                            disabled=not has_finish,
                         )
 
-                    with e2:
-
                         current_shelf = int(
-                            detail.get(
-                                "vida_util_meses"
-                            )
-                            if pd.notna(
-                                detail.get(
-                                    "vida_util_meses"
-                                )
-                            )
+                            detail.get("vida_util_meses")
+                            if pd.notna(detail.get("vida_util_meses"))
                             else DEFAULT_SHELF_LIFE_MONTHS
                         )
 
                         edit_shelf = st.number_input(
-                            "Vida útil [meses]",
+                            "Vida útil desde finalización [meses]",
                             min_value=1,
                             max_value=120,
                             value=current_shelf,
                             step=1,
                         )
 
+                    with e3:
+                        admin_person_ids = people_admin["id"].astype(int).tolist()
+
                         edit_resp_id = st.selectbox(
                             "Responsable",
                             options=admin_person_ids,
-                            index=admin_person_ids.index(
-                                default_resp_id
-                            ),
+                            index=admin_person_ids.index(default_resp_id),
                             format_func=lambda pid: (
                                 people_admin.loc[
                                     people_admin["id"] == pid,
@@ -3190,11 +3501,8 @@ elif section == "Órdenes y lotes":
                             "Estado",
                             ESTADOS,
                             index=(
-                                ESTADOS.index(
-                                    detail["estado"]
-                                )
-                                if detail["estado"]
-                                in ESTADOS
+                                ESTADOS.index(detail["estado"])
+                                if detail["estado"] in ESTADOS
                                 else 0
                             ),
                         )
@@ -3203,116 +3511,258 @@ elif section == "Órdenes y lotes":
                             "Prioridad",
                             PRIORIDADES,
                             index=(
-                                PRIORIDADES.index(
-                                    detail["prioridad"]
-                                )
-                                if detail["prioridad"]
-                                in PRIORIDADES
+                                PRIORIDADES.index(detail["prioridad"])
+                                if detail["prioridad"] in PRIORIDADES
                                 else 0
+                            ),
+                        )
+
+                        # Fórmulas del producto seleccionado
+                        formulas_for_product = fetch_df(
+                            """
+                            SELECT id, version, cantidad_base, unidad_base,
+                                   densidad_teorica, activa
+                            FROM formulaciones
+                            WHERE producto_id = ?
+                            ORDER BY version DESC
+                            """,
+                            (int(edit_product_id),),
+                        ) if edit_product_id else pd.DataFrame()
+
+                        formula_options = [None]
+                        if not formulas_for_product.empty:
+                            formula_options += formulas_for_product["id"].astype(int).tolist()
+
+                        current_formula_id = (
+                            int(detail["formulacion_id"])
+                            if pd.notna(detail.get("formulacion_id"))
+                            else None
+                        )
+
+                        formula_index = (
+                            formula_options.index(current_formula_id)
+                            if current_formula_id in formula_options
+                            else 0
+                        )
+
+                        edit_formula_id = st.selectbox(
+                            "Formulación asignada",
+                            options=formula_options,
+                            index=formula_index,
+                            format_func=lambda fid: (
+                                "Sin formulación"
+                                if fid is None
+                                else (
+                                    "V"
+                                    + str(
+                                        int(
+                                            formulas_for_product.loc[
+                                                formulas_for_product["id"] == fid,
+                                                "version",
+                                            ].iloc[0]
+                                        )
+                                    )
+                                    + (
+                                        " · ACTIVA"
+                                        if int(
+                                            formulas_for_product.loc[
+                                                formulas_for_product["id"] == fid,
+                                                "activa",
+                                            ].iloc[0]
+                                        ) == 1
+                                        else ""
+                                    )
+                                )
                             ),
                         )
 
                     edit_obs = st.text_area(
                         "Observaciones",
-                        value=str(
-                            detail.get(
-                                "observaciones"
-                            )
-                            or ""
-                        ),
+                        value=str(detail.get("observaciones") or ""),
                     )
 
                     save_edit = st.form_submit_button(
-                        "Guardar modificaciones",
+                        "💾 Guardar todas las modificaciones",
                         type="primary",
                         use_container_width=True,
                     )
 
                 if save_edit:
-
-                    selected_resp = people_admin[
-                        people_admin[
-                            "id"
-                        ]
-                        == edit_resp_id
-                    ].iloc[0]
-
-                    final_date_value = (
-                        edit_finish
-                        if has_finish
-                        else None
+                    proposed_finish = edit_finish if register_finish else None
+                    valid_finish, deadline_check = validate_finish_date(
+                        detail,
+                        proposed_finish,
                     )
 
-                    expiry_value = (
-                        months_after(
-                            final_date_value,
-                            int(edit_shelf),
+                    if not valid_finish:
+                        st.error(
+                            f"No se guardaron los cambios. La fecha máxima de cierre es "
+                            f"{deadline_check.strftime('%d/%m/%Y')}."
                         )
-                        if final_date_value
-                        else None
-                    )
+                    elif not family_product_ids or edit_product_id is None:
+                        st.error("La familia seleccionada no tiene un producto válido.")
+                    else:
+                        selected_resp = people_admin[
+                            people_admin["id"] == edit_resp_id
+                        ].iloc[0]
 
-                    execute(
-                        """
-                        UPDATE ordenes
-                        SET producto = ?,
-                            cantidad_planificada = ?,
-                            fecha_inicio = ?,
-                            fecha_fin = ?,
-                            fecha_vencimiento = ?,
-                            vida_util_meses = ?,
-                            responsable = ?,
-                            responsable_email = ?,
-                            estado = ?,
-                            prioridad = ?,
-                            observaciones = ?,
-                            updated_at = ?
-                        WHERE id = ?
-                        """,
-                        (
-                            edit_product.strip(),
-                            float(edit_planned),
-                            edit_start.isoformat(),
+                        selected_product = products_admin[
+                            products_admin["id"] == edit_product_id
+                        ].iloc[0]
+
+                        final_date_value = (
+                            edit_finish if register_finish else None
+                        )
+
+                        # Si el estado es Finalizada y no se marcó fecha, usar hoy.
+                        if edit_status == "Finalizada" and final_date_value is None:
+                            today_value = date.today()
+                            deadline_value = get_order_close_deadline(detail)
+                            final_date_value = (
+                                deadline_value
+                                if deadline_value and today_value > deadline_value
+                                else today_value
+                            )
+
+                        expiry_value = (
+                            months_after(
+                                final_date_value,
+                                int(edit_shelf),
+                            )
+                            if final_date_value
+                            else None
+                        )
+
+                        execute(
+                            """
+                            UPDATE ordenes
+                            SET linea = ?,
+                                producto = ?,
+                                producto_id = ?,
+                                formulacion_id = ?,
+                                cantidad_planificada = ?,
+                                cantidad_real_producida = ?,
+                                cantidad_producida = ?,
+                                unidad = ?,
+                                fecha_orden = ?,
+                                fecha_inicio = ?,
+                                fecha_fin = ?,
+                                fecha_vencimiento = ?,
+                                vida_util_meses = ?,
+                                responsable = ?,
+                                responsable_email = ?,
+                                estado = ?,
+                                prioridad = ?,
+                                observaciones = ?,
+                                updated_at = ?
+                            WHERE id = ?
+                            """,
                             (
-                                final_date_value.isoformat()
-                                if final_date_value
-                                else None
+                                edit_family,
+                                str(selected_product["nombre"]),
+                                int(edit_product_id),
+                                (
+                                    int(edit_formula_id)
+                                    if edit_formula_id is not None
+                                    else None
+                                ),
+                                float(edit_planned),
+                                float(edit_actual),
+                                float(edit_actual),
+                                edit_unit,
+                                edit_order_date.isoformat(),
+                                edit_start.isoformat(),
+                                (
+                                    final_date_value.isoformat()
+                                    if final_date_value
+                                    else None
+                                ),
+                                (
+                                    expiry_value.isoformat()
+                                    if expiry_value
+                                    else None
+                                ),
+                                int(edit_shelf),
+                                str(selected_resp["nombre"]),
+                                str(selected_resp["email"]),
+                                edit_status,
+                                edit_priority,
+                                edit_obs.strip(),
+                                datetime.now().isoformat(timespec="seconds"),
+                                int(selected_order),
                             ),
-                            (
-                                expiry_value.isoformat()
-                                if expiry_value
-                                else None
-                            ),
-                            int(edit_shelf),
-                            str(
-                                selected_resp["nombre"]
-                            ),
-                            str(
-                                selected_resp["email"]
-                            ),
-                            edit_status,
-                            edit_priority,
-                            edit_obs.strip(),
-                            datetime.now().isoformat(
-                                timespec="seconds"
-                            ),
+                        )
+
+                        stock_ok, stock_msg = sync_order_material_reservation(
+                            int(selected_order)
+                        )
+
+                        add_event(
                             int(selected_order),
-                        ),
-                    )
+                            "Lote modificado por administrador",
+                            (
+                                f"Usuario: {st.session_state.get('current_user', 'Administrador')} · "
+                                f"Fórmula: {edit_formula_id or 'sin fórmula'} · "
+                                f"Stock: {stock_msg}"
+                            ),
+                        )
 
-                    add_event(
-                        int(selected_order),
-                        "Lote modificado por administrador",
-                        (
-                            f"Usuario: "
-                            f"{st.session_state.get('current_user', 'Administrador')}"
-                        ),
-                    )
+                        # Verificación real de guardado antes de rerun.
+                        saved = get_order_by_id(int(selected_order))
 
-                    st.success(
-                        "Lote actualizado correctamente."
+                        if saved:
+                            st.success(
+                                "Cambios guardados correctamente. "
+                                f"Inicio: {saved.get('fecha_inicio') or '—'} · "
+                                f"Finalización: {saved.get('fecha_fin') or '—'} · "
+                                f"Vencimiento: {saved.get('fecha_vencimiento') or '—'}."
+                            )
+
+                            if stock_ok and edit_formula_id is not None:
+                                st.success(
+                                    "La formulación quedó asignada y el stock teórico "
+                                    "de materias primas fue descontado/sincronizado."
+                                )
+                            elif not stock_ok:
+                                st.warning(
+                                    f"Los datos se guardaron, pero hubo un problema con stock: {stock_msg}"
+                                )
+
+                            st.session_state["edit_order_id"] = int(selected_order)
+                            st.rerun()
+
+                reserved = get_order_reserved_materials(
+                    int(selected_order)
+                )
+
+                if not reserved.empty:
+                    st.subheader("Stock reservado / descontado por esta orden")
+                    st.dataframe(
+                        reserved.rename(
+                            columns={
+                                "codigo_totvs": "Código TOTVS",
+                                "materia_prima": "Materia prima",
+                                "cantidad_teorica": "Cantidad descontada",
+                                "unidad": "Unidad",
+                                "saldo_actual": "Saldo actual",
+                            }
+                        )[
+                            [
+                                "Código TOTVS",
+                                "Materia prima",
+                                "Cantidad descontada",
+                                "Unidad",
+                                "Saldo actual",
+                            ]
+                        ].style.format(
+                            {
+                                "Cantidad descontada": "{:.3f}",
+                                "Saldo actual": "{:.3f}",
+                            }
+                        ),
+                        use_container_width=True,
+                        hide_index=True,
                     )
-                    st.rerun()
 
                 q1, q2 = st.columns(2)
 
@@ -3324,16 +3774,19 @@ elif section == "Órdenes y lotes":
                             type="primary",
                             use_container_width=True,
                         ):
-                            finish_date = pd.Timestamp(date.today())
+                            today_value = date.today()
+                            deadline_value = get_order_close_deadline(detail)
+                            finish_date = (
+                                deadline_value
+                                if deadline_value and today_value > deadline_value
+                                else today_value
+                            )
                             shelf_months = int(
                                 detail.get("vida_util_meses")
                                 if pd.notna(detail.get("vida_util_meses"))
                                 else DEFAULT_SHELF_LIFE_MONTHS
                             )
-                            expiry = months_after(
-                                finish_date.date(),
-                                shelf_months,
-                            )
+                            expiry = months_after(finish_date, shelf_months)
 
                             execute(
                                 """
@@ -3345,19 +3798,18 @@ elif section == "Órdenes y lotes":
                                 WHERE id = ?
                                 """,
                                 (
-                                    finish_date.date().isoformat(),
+                                    finish_date.isoformat(),
                                     expiry.isoformat(),
                                     datetime.now().isoformat(timespec="seconds"),
                                     int(selected_order),
                                 ),
                             )
-
                             add_event(
                                 int(selected_order),
                                 "Lote cerrado por administrador",
                                 f"Usuario: {st.session_state.get('current_user', 'Administrador')}",
                             )
-                            st.success("Lote cerrado correctamente.")
+                            st.session_state["edit_order_id"] = int(selected_order)
                             st.rerun()
 
                 with q2:
@@ -3386,7 +3838,7 @@ elif section == "Órdenes y lotes":
                                 "Lote reabierto por administrador",
                                 f"Usuario: {st.session_state.get('current_user', 'Administrador')}",
                             )
-                            st.success("Lote reabierto correctamente.")
+                            st.session_state["edit_order_id"] = int(selected_order)
                             st.rerun()
 
             else:
