@@ -26,7 +26,7 @@ import streamlit as st
 # CONFIGURACIÓN
 # ============================================================
 
-APP_VERSION = "V1.12"
+APP_VERSION = "V1.13"
 APP_TITLE = "SEV | Control de Producción"
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -2042,15 +2042,14 @@ if section == "Tablero":
         else 0
     )
 
-    c1, c2, c3, c4, c5, c6, c7 = st.columns(7)
+    c1, c2, c3, c4, c5, c6 = st.columns(6)
 
     c1.metric("Órdenes totales", total_orders)
     c2.metric("Órdenes activas", active_orders)
     c3.metric("Finalizadas", finished_orders)
     c4.metric("Cantidad producida", f"{total_qty:,.1f}".replace(",", "."))
-    c5.metric("Vencen ≤ 90 días", expiring_90)
-    c6.metric("Vencidos", expired)
-    c7.metric("Errores de cierre", close_errors)
+    c5.metric("Vencidos", expired)
+    c6.metric("Errores de cierre", close_errors)
 
     if close_errors > 0:
         st.error(
@@ -2118,14 +2117,13 @@ if section == "Tablero":
                 "producto",
                 "linea",
                 "cantidad_planificada",
-                "cantidad_producida",
+                "cantidad_real_producida",
                 "unidad",
                 "fecha_inicio",
                 "fecha_fin",
                 "fecha_vencimiento",
                 "responsable",
                 "estado",
-                "prioridad",
             ]
         ].copy()
 
@@ -2134,15 +2132,14 @@ if section == "Tablero":
             "Orden",
             "Producto",
             "Familia",
-            "Producción teórica",
-            "Producción real",
+            "Teórico",
+            "Real",
             "Unidad",
             "Inicio",
             "Finalización",
             "Vencimiento",
             "Responsable",
             "Estado",
-            "Prioridad",
         ]
 
         board["Fecha límite cierre"] = orders.apply(
@@ -2177,7 +2174,105 @@ if section == "Tablero":
             ),
             use_container_width=True,
             hide_index=True,
+            height=min(420, 38 + 35 * max(len(board), 1)),
+            column_config={
+                "Lote": st.column_config.TextColumn(width="medium"),
+                "Orden": st.column_config.TextColumn(width="medium"),
+                "Producto": st.column_config.TextColumn(width="medium"),
+                "Familia": st.column_config.TextColumn(width="small"),
+                "Teórico": st.column_config.NumberColumn(format="%.2f"),
+                "Real": st.column_config.NumberColumn(format="%.2f"),
+                "Unidad": st.column_config.TextColumn(width="small"),
+                "Inicio": st.column_config.TextColumn(width="small"),
+                "Finalización": st.column_config.TextColumn(width="small"),
+                "Vencimiento": st.column_config.TextColumn(width="small"),
+                "Responsable": st.column_config.TextColumn(width="medium"),
+                "Estado": st.column_config.TextColumn(width="small"),
+                "Fecha límite cierre": st.column_config.TextColumn(width="small"),
+                "Situación": st.column_config.TextColumn(width="small"),
+            },
         )
+
+    st.subheader("Consumo de materias primas por lote")
+
+    st.caption(
+        "Muestra solamente el consumo calculado por la formulación de cada lote. "
+        "Si se registró lote de materia prima, también se visualiza."
+    )
+
+    if orders.empty:
+        st.info("No hay lotes para mostrar.")
+    else:
+        consumption_rows = []
+
+        for _, order_row in orders.iterrows():
+            theo = calculate_theoretical_consumption(order_row)
+
+            if theo.empty:
+                continue
+
+            actual_lots = fetch_df(
+                """
+                SELECT
+                    cmp.materia_prima_id,
+                    GROUP_CONCAT(
+                        DISTINCT CASE
+                            WHEN TRIM(COALESCE(cmp.lote_mp, '')) <> ''
+                            THEN cmp.lote_mp
+                        END
+                    ) AS lotes_mp
+                FROM consumos_materias_primas cmp
+                WHERE cmp.orden_id = ?
+                GROUP BY cmp.materia_prima_id
+                """,
+                (int(order_row["id"]),),
+            )
+
+            lot_map = {}
+            if not actual_lots.empty:
+                lot_map = {
+                    int(r["materia_prima_id"]): (r["lotes_mp"] or "—")
+                    for _, r in actual_lots.iterrows()
+                }
+
+            for _, mp in theo.iterrows():
+                consumption_rows.append(
+                    {
+                        "Lote producción": order_row["lote_codigo"],
+                        "Producto": order_row["producto"],
+                        "Código TOTVS": mp.get("mp_codigo") or "—",
+                        "Materia prima": mp.get("materia_prima") or "—",
+                        "Consumo teórico kg": float(mp.get("consumo_teorico") or 0),
+                        "Consumo teórico L": float(mp.get("consumo_teorico_l") or 0),
+                        "Lote materia prima": lot_map.get(
+                            int(mp["materia_prima_id"]),
+                            "—",
+                        ),
+                    }
+                )
+
+        if consumption_rows:
+            consumption_board = pd.DataFrame(consumption_rows)
+
+            st.dataframe(
+                consumption_board,
+                use_container_width=True,
+                hide_index=True,
+                height=min(520, 38 + 35 * max(len(consumption_board), 1)),
+                column_config={
+                    "Lote producción": st.column_config.TextColumn(width="medium"),
+                    "Producto": st.column_config.TextColumn(width="medium"),
+                    "Código TOTVS": st.column_config.TextColumn(width="small"),
+                    "Materia prima": st.column_config.TextColumn(width="large"),
+                    "Consumo teórico kg": st.column_config.NumberColumn(format="%.3f"),
+                    "Consumo teórico L": st.column_config.NumberColumn(format="%.3f"),
+                    "Lote materia prima": st.column_config.TextColumn(width="medium"),
+                },
+            )
+        else:
+            st.info(
+                "Todavía no hay lotes con formulación asignada para calcular consumos."
+            )
 
     st.subheader("Resumen por línea")
 
