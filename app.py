@@ -25,7 +25,7 @@ import streamlit as st
 # CONFIGURACIÓN
 # ============================================================
 
-APP_VERSION = "V1.5"
+APP_VERSION = "V1.8"
 APP_TITLE = "SEV | Control de Producción"
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -310,6 +310,17 @@ st.markdown(
         color: var(--sev-green-dark);
     }
 
+    .lot-status {
+        display: inline-block;
+        padding: 4px 9px;
+        border-radius: 999px;
+        color: white;
+        font-size: .75rem;
+        font-weight: 700;
+        margin-left: 8px;
+        vertical-align: middle;
+    }
+
     .small-note {
         color: var(--sev-muted);
         font-size: .82rem;
@@ -354,6 +365,88 @@ def get_conn():
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     return conn
+
+
+
+MATERIAS_PRIMAS_MATA225 = [('MP0001', 'ERCANOL IT 6', '01', 0.0), ('MP0002', 'ERCALEAF MSO', '01', 0.0), ('MP0003', 'ERCALEAF ADJ ARS', '01', 0.0), ('MP0004', 'XIAMETER AFE 430 BT305', '01', 0.0), ('MP0013', 'ACIDO BORICO', '01', -5720.0), ('MP0017', 'MONOETANOLAMINA (MEA)', '01', -2960.0), ('MP0019', 'AGUA', '01', -1340.0)]
+
+
+def seed_materias_primas_mata225():
+    """Carga inicial idempotente de materias primas del listado MATA225."""
+    conn = get_conn()
+    try:
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(materias_primas)").fetchall()]
+        if not cols:
+            return
+
+        for codigo, nombre, almacen, saldo in MATERIAS_PRIMAS_MATA225:
+            existing = conn.execute(
+                "SELECT id FROM materias_primas WHERE UPPER(TRIM(nombre)) = UPPER(TRIM(?)) LIMIT 1",
+                (nombre,),
+            ).fetchone()
+
+            if existing:
+                material_id = int(existing[0])
+
+                update_parts = []
+                update_values = []
+
+                if "codigo_totvs" in cols:
+                    update_parts.append("codigo_totvs = ?")
+                    update_values.append(codigo)
+                if "codigo" in cols:
+                    update_parts.append("codigo = COALESCE(NULLIF(codigo, ''), ?)")
+                    update_values.append(codigo)
+                if "almacen" in cols:
+                    update_parts.append("almacen = ?")
+                    update_values.append(almacen)
+                if "saldo_actual" in cols:
+                    update_parts.append("saldo_actual = ?")
+                    update_values.append(float(saldo))
+                if "unidad_stock" in cols:
+                    update_parts.append("unidad_stock = COALESCE(NULLIF(unidad_stock, ''), 'kg')")
+
+                if update_parts:
+                    update_values.append(material_id)
+                    conn.execute(
+                        f"UPDATE materias_primas SET {', '.join(update_parts)} WHERE id = ?",
+                        tuple(update_values),
+                    )
+                continue
+
+            values = {}
+            if "nombre" in cols:
+                values["nombre"] = nombre
+            if "unidad" in cols:
+                values["unidad"] = "kg"
+            if "activo" in cols:
+                values["activo"] = 1
+            if "created_at" in cols:
+                values["created_at"] = datetime.now().isoformat(timespec="seconds")
+
+            # Campos opcionales: se completan solo si existen en la versión actual de la BD.
+            if "codigo" in cols:
+                values["codigo"] = codigo
+            if "codigo_totvs" in cols:
+                values["codigo_totvs"] = codigo
+            if "almacen" in cols:
+                values["almacen"] = almacen
+            if "saldo_actual" in cols:
+                values["saldo_actual"] = saldo
+            if "unidad_stock" in cols:
+                values["unidad_stock"] = "kg"
+
+            if values:
+                field_names = list(values.keys())
+                placeholders = ", ".join(["?"] * len(field_names))
+                conn.execute(
+                    f"INSERT INTO materias_primas ({', '.join(field_names)}) VALUES ({placeholders})",
+                    tuple(values[k] for k in field_names),
+                )
+
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def init_db():
@@ -476,6 +569,32 @@ def init_db():
             activo INTEGER NOT NULL DEFAULT 1,
             created_at TEXT NOT NULL
         )
+        """
+    )
+
+    cur.execute("PRAGMA table_info(materias_primas)")
+    mp_columns = {row[1] for row in cur.fetchall()}
+
+    for column_name, column_type in [
+        ("codigo_totvs", "TEXT"),
+        ("almacen", "TEXT"),
+        ("saldo_actual", "REAL DEFAULT 0"),
+        ("densidad", "REAL"),
+        ("unidad_stock", "TEXT"),
+    ]:
+        if column_name not in mp_columns:
+            cur.execute(
+                f"ALTER TABLE materias_primas ADD COLUMN {column_name} {column_type}"
+            )
+
+    # Completar codigo_totvs con el código existente cuando corresponda.
+    cur.execute(
+        """
+        UPDATE materias_primas
+        SET codigo_totvs = codigo
+        WHERE (codigo_totvs IS NULL OR TRIM(codigo_totvs) = '')
+          AND codigo IS NOT NULL
+          AND TRIM(codigo) <> ''
         """
     )
 
@@ -901,6 +1020,7 @@ def execute(query, params=()):
 init_db()
 
 
+seed_materias_primas_mata225()
 # ============================================================
 # UTILIDADES DE CÓDIGO
 # ============================================================
@@ -1254,10 +1374,21 @@ def get_raw_materials(active_only=True):
     where = "WHERE activo = 1" if active_only else ""
     return fetch_df(
         f"""
-        SELECT id, codigo, nombre, unidad, activo, created_at
+        SELECT
+            id,
+            codigo,
+            codigo_totvs,
+            nombre,
+            unidad,
+            unidad_stock,
+            almacen,
+            saldo_actual,
+            densidad,
+            activo,
+            created_at
         FROM materias_primas
         {where}
-        ORDER BY codigo, nombre
+        ORDER BY COALESCE(codigo_totvs, codigo), nombre
         """
     )
 
@@ -1439,6 +1570,30 @@ def production_variance(theoretical, actual):
     return (actual - theoretical) / theoretical * 100.0
 
 
+
+def lot_status_label(row):
+    status = str(row.get("estado") or "")
+    if status == "Finalizada":
+        return "CERRADA"
+    if status == "Cancelada":
+        return "CANCELADA"
+    if status == "En producción":
+        return "EN PRODUCCIÓN"
+    if status == "En preparación":
+        return "EN PREPARACIÓN"
+    return "ABIERTA"
+
+
+def lot_status_color(status):
+    return {
+        "CERRADA": "#166534",
+        "CANCELADA": "#991b1b",
+        "EN PRODUCCIÓN": "#1d4ed8",
+        "EN PREPARACIÓN": "#b45309",
+        "ABIERTA": "#0f766e",
+    }.get(status, "#475569")
+
+
 def get_orders():
     return fetch_df(
         """
@@ -1519,21 +1674,25 @@ with st.sidebar:
             f"{current_person['email']} · {current_person['rol']}"
         )
 
+    module_options = [
+        "Tablero",
+        "Nueva orden",
+        "Registrar producción",
+        "Órdenes y lotes",
+        "Familias",
+        "Productos",
+        "Materias primas",
+        "Consumibles",
+        "Formulaciones",
+        "Personas y correos",
+    ]
+
+    default_module_index = 3 if st.session_state.pop("go_orders", False) else 0
+
     section = st.radio(
         "Módulo",
-        [
-            "Tablero",
-            "Nueva orden",
-            "Registrar producción",
-            "Órdenes y lotes",
-            "Familias",
-            "Productos",
-            "Materias primas",
-            "Consumibles",
-            "Formulaciones",
-            "Personas y correos",
-        ],
-        index=0,
+        module_options,
+        index=default_module_index,
     )
 
     st.divider()
@@ -1629,10 +1788,15 @@ if section == "Tablero":
                 produced = float(row["cantidad_real_producida"] or 0)
                 progress = (produced / planned * 100) if planned > 0 else 0
 
+                status_label = lot_status_label(row)
+                status_color = lot_status_color(status_label)
+
                 st.markdown(
                     f"""
                     <div class="sev-box">
-                        <div class="sev-lot">{row['lote_codigo']}</div>
+                        <div class="sev-lot">{row['lote_codigo']}
+                        <span class="lot-status" style="background:{status_color};">{status_label}</span>
+                        </div>
                         <b>{row['producto']}</b> · {row['linea']} · {row['estado']}<br>
                         Planificado: {fmt_qty(planned, row['unidad'])} ·
                         Producido: {fmt_qty(produced, row['unidad'])} ·
@@ -1644,6 +1808,16 @@ if section == "Tablero":
                     """,
                     unsafe_allow_html=True,
                 )
+
+                if is_admin():
+                    if st.button(
+                        f"✏️ Modificar {row['lote_codigo']}",
+                        key=f"dashboard_edit_{int(row['id'])}",
+                        use_container_width=True,
+                    ):
+                        st.session_state["edit_order_id"] = int(row["id"])
+                        st.session_state["go_orders"] = True
+                        st.rerun()
 
     st.subheader("Tablero de lotes")
 
@@ -1682,8 +1856,26 @@ if section == "Tablero":
             "Prioridad",
         ]
 
+        board["Situación"] = orders.apply(
+            lot_status_label,
+            axis=1,
+        )
+
+        def _status_style(value):
+            styles = {
+                "CERRADA": "background-color:#dcfce7;color:#166534;font-weight:700;",
+                "CANCELADA": "background-color:#fee2e2;color:#991b1b;font-weight:700;",
+                "EN PRODUCCIÓN": "background-color:#dbeafe;color:#1d4ed8;font-weight:700;",
+                "EN PREPARACIÓN": "background-color:#fef3c7;color:#92400e;font-weight:700;",
+                "ABIERTA": "background-color:#ccfbf1;color:#115e59;font-weight:700;",
+            }
+            return styles.get(value, "")
+
         st.dataframe(
-            board,
+            board.style.map(
+                _status_style,
+                subset=["Situación"],
+            ),
             use_container_width=True,
             hide_index=True,
         )
@@ -2702,9 +2894,18 @@ elif section == "Órdenes y lotes":
         st.divider()
         st.subheader("Detalle y trazabilidad")
 
+        order_options = view["id"].astype(int).tolist()
+        preferred_order = st.session_state.pop("edit_order_id", None)
+        default_order_index = (
+            order_options.index(int(preferred_order))
+            if preferred_order is not None and int(preferred_order) in order_options
+            else 0
+        )
+
         selected_order = st.selectbox(
             "Seleccionar orden",
-            options=view["id"].tolist(),
+            options=order_options,
+            index=default_order_index,
             format_func=lambda oid: (
                 f"{view.loc[view['id'] == oid, 'lote_codigo'].iloc[0]} · "
                 f"{view.loc[view['id'] == oid, 'producto'].iloc[0]}"
@@ -2832,6 +3033,21 @@ elif section == "Órdenes y lotes":
 
                 st.divider()
                 st.subheader("Administración del lote")
+
+                current_status_label = lot_status_label(detail)
+                current_status_color = lot_status_color(current_status_label)
+
+                st.markdown(
+                    f"""
+                    <div style="margin-bottom:12px;">
+                        <span class="lot-status" style="background:{current_status_color};margin-left:0;">
+                            {current_status_label}
+                        </span>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+
 
                 people_admin = get_people(
                     active_only=True
@@ -3097,6 +3313,81 @@ elif section == "Órdenes y lotes":
                         "Lote actualizado correctamente."
                     )
                     st.rerun()
+
+                q1, q2 = st.columns(2)
+
+                with q1:
+                    if str(detail["estado"]) != "Finalizada":
+                        if st.button(
+                            "🔒 Cerrar lote",
+                            key=f"close_lot_{selected_order}",
+                            type="primary",
+                            use_container_width=True,
+                        ):
+                            finish_date = pd.Timestamp(date.today())
+                            shelf_months = int(
+                                detail.get("vida_util_meses")
+                                if pd.notna(detail.get("vida_util_meses"))
+                                else DEFAULT_SHELF_LIFE_MONTHS
+                            )
+                            expiry = months_after(
+                                finish_date.date(),
+                                shelf_months,
+                            )
+
+                            execute(
+                                """
+                                UPDATE ordenes
+                                SET estado = 'Finalizada',
+                                    fecha_fin = ?,
+                                    fecha_vencimiento = ?,
+                                    updated_at = ?
+                                WHERE id = ?
+                                """,
+                                (
+                                    finish_date.date().isoformat(),
+                                    expiry.isoformat(),
+                                    datetime.now().isoformat(timespec="seconds"),
+                                    int(selected_order),
+                                ),
+                            )
+
+                            add_event(
+                                int(selected_order),
+                                "Lote cerrado por administrador",
+                                f"Usuario: {st.session_state.get('current_user', 'Administrador')}",
+                            )
+                            st.success("Lote cerrado correctamente.")
+                            st.rerun()
+
+                with q2:
+                    if str(detail["estado"]) == "Finalizada":
+                        if st.button(
+                            "🔓 Reabrir lote",
+                            key=f"reopen_lot_{selected_order}",
+                            use_container_width=True,
+                        ):
+                            execute(
+                                """
+                                UPDATE ordenes
+                                SET estado = 'Planificada',
+                                    fecha_fin = NULL,
+                                    fecha_vencimiento = NULL,
+                                    updated_at = ?
+                                WHERE id = ?
+                                """,
+                                (
+                                    datetime.now().isoformat(timespec="seconds"),
+                                    int(selected_order),
+                                ),
+                            )
+                            add_event(
+                                int(selected_order),
+                                "Lote reabierto por administrador",
+                                f"Usuario: {st.session_state.get('current_user', 'Administrador')}",
+                            )
+                            st.success("Lote reabierto correctamente.")
+                            st.rerun()
 
             else:
 
@@ -3418,16 +3709,181 @@ elif section == "Materias primas":
 
     st.subheader("Maestro de materias primas")
 
-    if is_admin():
-        with st.form("new_raw_material_form"):
-            r1, r2, r3 = st.columns(3)
+    st.caption(
+        "Código TOTVS · unidad · stock/saldo · densidad · almacén · estado"
+    )
 
-            with r1:
-                mp_code = st.text_input("Código", placeholder="Ej.: MP-001")
-            with r2:
-                mp_name = st.text_input("Materia prima")
-            with r3:
-                mp_unit = st.selectbox("Unidad", ["kg", "g", "L", "mL", "unidades"])
+    materials = get_raw_materials(active_only=False)
+
+    if materials.empty:
+        st.info("Todavía no existen materias primas.")
+    else:
+        c1, c2, c3 = st.columns(3)
+
+        with c1:
+            mp_search = st.text_input(
+                "Buscar código o materia prima"
+            )
+
+        with c2:
+            mp_status_filter = st.selectbox(
+                "Estado",
+                ["Todas", "Activas", "Inactivas"],
+            )
+
+        with c3:
+            mp_warehouse_filter = st.selectbox(
+                "Almacén",
+                ["Todos"] + sorted(
+                    [
+                        str(x)
+                        for x in materials["almacen"].dropna().unique().tolist()
+                        if str(x).strip()
+                    ]
+                ),
+            )
+
+        view = materials.copy()
+
+        if mp_search.strip():
+            q = mp_search.strip().lower()
+            view = view[
+                view["nombre"].astype(str).str.lower().str.contains(q, na=False)
+                | view["codigo"].astype(str).str.lower().str.contains(q, na=False)
+                | view["codigo_totvs"].astype(str).str.lower().str.contains(q, na=False)
+            ]
+
+        if mp_status_filter == "Activas":
+            view = view[view["activo"] == 1]
+        elif mp_status_filter == "Inactivas":
+            view = view[view["activo"] == 0]
+
+        if mp_warehouse_filter != "Todos":
+            view = view[
+                view["almacen"].astype(str) == mp_warehouse_filter
+            ]
+
+        display = view.copy()
+
+        display["Estado"] = display["activo"].map(
+            {1: "Activa", 0: "Inactiva"}
+        )
+
+        display["Código TOTVS"] = display["codigo_totvs"].fillna(
+            display["codigo"]
+        )
+
+        display["Unidad"] = display["unidad_stock"].fillna(
+            display["unidad"]
+        )
+
+        display["Saldo actual"] = pd.to_numeric(
+            display["saldo_actual"],
+            errors="coerce",
+        ).fillna(0.0)
+
+        display["Densidad kg/L"] = pd.to_numeric(
+            display["densidad"],
+            errors="coerce",
+        )
+
+        st.dataframe(
+            display[
+                [
+                    "Código TOTVS",
+                    "nombre",
+                    "Unidad",
+                    "almacen",
+                    "Saldo actual",
+                    "Densidad kg/L",
+                    "Estado",
+                ]
+            ].rename(
+                columns={
+                    "nombre": "Materia prima",
+                    "almacen": "Almacén",
+                }
+            ).style.format(
+                {
+                    "Saldo actual": "{:,.3f}",
+                    "Densidad kg/L": "{:.3f}",
+                },
+                na_rep="—",
+            ),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+        st.download_button(
+            "⬇️ Descargar materias primas",
+            data=display[
+                [
+                    "Código TOTVS",
+                    "nombre",
+                    "Unidad",
+                    "almacen",
+                    "Saldo actual",
+                    "Densidad kg/L",
+                    "Estado",
+                ]
+            ].rename(
+                columns={
+                    "nombre": "Materia prima",
+                    "almacen": "Almacén",
+                }
+            ).to_csv(
+                index=False,
+                sep=";",
+            ).encode("utf-8-sig"),
+            file_name="sev_materias_primas.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
+
+    if is_admin():
+
+        st.divider()
+        st.subheader("Agregar nueva materia prima")
+
+        with st.form("new_raw_material_form"):
+            a1, a2, a3 = st.columns(3)
+
+            with a1:
+                mp_code = st.text_input(
+                    "Código TOTVS",
+                    placeholder="Ej.: MP0020",
+                )
+
+                mp_name = st.text_input(
+                    "Materia prima"
+                )
+
+            with a2:
+                mp_unit = st.selectbox(
+                    "Unidad de stock",
+                    ["kg", "g", "L", "mL", "unidades"],
+                )
+
+                mp_warehouse = st.text_input(
+                    "Almacén",
+                    value="01",
+                )
+
+            with a3:
+                mp_balance = st.number_input(
+                    "Saldo actual",
+                    value=0.0,
+                    step=1.0,
+                )
+
+                mp_density = st.number_input(
+                    "Densidad [kg/L]",
+                    min_value=0.0,
+                    value=0.0,
+                    step=0.001,
+                    format="%.3f",
+                    help="Dejar 0 si todavía no se conoce.",
+                )
 
             add_mp = st.form_submit_button(
                 "Agregar materia prima",
@@ -3440,54 +3896,214 @@ elif section == "Materias primas":
             name = mp_name.strip()
 
             if not code or not name:
-                st.error("Ingresá código y nombre.")
+                st.error(
+                    "Ingresá Código TOTVS y nombre."
+                )
             else:
                 existing = fetch_df(
-                    "SELECT id FROM materias_primas WHERE UPPER(codigo)=UPPER(?)",
+                    """
+                    SELECT id
+                    FROM materias_primas
+                    WHERE UPPER(COALESCE(codigo_totvs, codigo)) = UPPER(?)
+                    """,
                     (code,),
                 )
 
                 if not existing.empty:
-                    st.error("Ese código ya existe.")
+                    st.error(
+                        "Ese Código TOTVS ya existe."
+                    )
                 else:
                     execute(
                         """
                         INSERT INTO materias_primas (
-                            codigo, nombre, unidad, activo, created_at
+                            codigo,
+                            codigo_totvs,
+                            nombre,
+                            unidad,
+                            unidad_stock,
+                            almacen,
+                            saldo_actual,
+                            densidad,
+                            activo,
+                            created_at
                         )
-                        VALUES (?, ?, ?, 1, ?)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
                         """,
                         (
                             code,
+                            code,
                             name,
                             mp_unit,
-                            datetime.now().isoformat(timespec="seconds"),
+                            mp_unit,
+                            mp_warehouse.strip(),
+                            float(mp_balance),
+                            (
+                                float(mp_density)
+                                if float(mp_density) > 0
+                                else None
+                            ),
+                            datetime.now().isoformat(
+                                timespec="seconds"
+                            ),
                         ),
                     )
-                    st.success("Materia prima agregada.")
+
+                    st.success(
+                        "Materia prima agregada."
+                    )
                     st.rerun()
 
-    materials = get_raw_materials(active_only=False)
+        st.divider()
+        st.subheader("Modificar materia prima")
 
-    if materials.empty:
-        st.info("Todavía no existen materias primas.")
-    else:
-        display = materials.copy()
-        display["Estado"] = display["activo"].map({1: "Activa", 0: "Inactiva"})
-
-        st.dataframe(
-            display[
-                ["codigo", "nombre", "unidad", "Estado"]
-            ].rename(
-                columns={
-                    "codigo": "Código",
-                    "nombre": "Materia prima",
-                    "unidad": "Unidad",
-                }
-            ),
-            use_container_width=True,
-            hide_index=True,
+        materials_admin = get_raw_materials(
+            active_only=False
         )
+
+        if not materials_admin.empty:
+
+            mp_ids = materials_admin[
+                "id"
+            ].astype(int).tolist()
+
+            selected_mp_id = st.selectbox(
+                "Seleccionar materia prima",
+                options=mp_ids,
+                format_func=lambda mid: (
+                    f"{materials_admin.loc[materials_admin['id'] == mid, 'codigo_totvs'].fillna(materials_admin.loc[materials_admin['id'] == mid, 'codigo']).iloc[0]} · "
+                    f"{materials_admin.loc[materials_admin['id'] == mid, 'nombre'].iloc[0]}"
+                ),
+            )
+
+            mp_detail = materials_admin[
+                materials_admin["id"] == selected_mp_id
+            ].iloc[0]
+
+            with st.form(
+                f"edit_raw_material_{selected_mp_id}"
+            ):
+
+                e1, e2, e3 = st.columns(3)
+
+                with e1:
+                    edit_code = st.text_input(
+                        "Código TOTVS",
+                        value=str(
+                            mp_detail["codigo_totvs"]
+                            if pd.notna(mp_detail["codigo_totvs"])
+                            else mp_detail["codigo"]
+                        ),
+                    )
+
+                    edit_name = st.text_input(
+                        "Materia prima",
+                        value=str(mp_detail["nombre"]),
+                    )
+
+                with e2:
+                    current_unit = (
+                        str(mp_detail["unidad_stock"])
+                        if pd.notna(mp_detail["unidad_stock"])
+                        else str(mp_detail["unidad"])
+                    )
+
+                    unit_options = [
+                        "kg", "g", "L", "mL", "unidades"
+                    ]
+
+                    edit_unit = st.selectbox(
+                        "Unidad de stock",
+                        unit_options,
+                        index=(
+                            unit_options.index(current_unit)
+                            if current_unit in unit_options
+                            else 0
+                        ),
+                    )
+
+                    edit_warehouse = st.text_input(
+                        "Almacén",
+                        value=(
+                            str(mp_detail["almacen"])
+                            if pd.notna(mp_detail["almacen"])
+                            else ""
+                        ),
+                    )
+
+                with e3:
+                    edit_balance = st.number_input(
+                        "Saldo actual",
+                        value=float(
+                            mp_detail["saldo_actual"]
+                            if pd.notna(mp_detail["saldo_actual"])
+                            else 0
+                        ),
+                        step=1.0,
+                    )
+
+                    edit_density = st.number_input(
+                        "Densidad [kg/L]",
+                        min_value=0.0,
+                        value=float(
+                            mp_detail["densidad"]
+                            if pd.notna(mp_detail["densidad"])
+                            else 0
+                        ),
+                        step=0.001,
+                        format="%.3f",
+                    )
+
+                edit_active = st.checkbox(
+                    "Materia prima activa",
+                    value=bool(mp_detail["activo"]),
+                )
+
+                save_edit_mp = st.form_submit_button(
+                    "Guardar cambios",
+                    type="primary",
+                    use_container_width=True,
+                )
+
+            if save_edit_mp:
+                execute(
+                    """
+                    UPDATE materias_primas
+                    SET codigo = ?,
+                        codigo_totvs = ?,
+                        nombre = ?,
+                        unidad = ?,
+                        unidad_stock = ?,
+                        almacen = ?,
+                        saldo_actual = ?,
+                        densidad = ?,
+                        activo = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        edit_code.strip().upper(),
+                        edit_code.strip().upper(),
+                        edit_name.strip(),
+                        edit_unit,
+                        edit_unit,
+                        edit_warehouse.strip(),
+                        float(edit_balance),
+                        (
+                            float(edit_density)
+                            if float(edit_density) > 0
+                            else None
+                        ),
+                        1 if edit_active else 0,
+                        int(selected_mp_id),
+                    ),
+                )
+
+                st.success(
+                    "Materia prima actualizada."
+                )
+                st.rerun()
+
+
 
 
 # ============================================================
@@ -3828,11 +4444,19 @@ elif section == "Formulaciones":
                                 materials["id"] == material_id
                             ].iloc[0]
 
+                            default_density = (
+                                float(selected_material["densidad"])
+                                if "densidad" in selected_material.index
+                                and pd.notna(selected_material["densidad"])
+                                and float(selected_material["densidad"]) > 0
+                                else 1.000
+                            )
+
                             with i2:
                                 material_density = st.number_input(
                                     "Densidad [kg/L]",
                                     min_value=0.001,
-                                    value=1.000,
+                                    value=default_density,
                                     step=0.001,
                                     format="%.3f",
                                 )
