@@ -12,6 +12,11 @@ from __future__ import annotations
 import sqlite3
 import calendar
 import smtplib
+import base64
+import gzip
+import os
+import tempfile
+import requests
 from email.message import EmailMessage
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -26,11 +31,233 @@ import streamlit as st
 # CONFIGURACIÓN
 # ============================================================
 
-APP_VERSION = "V1.14"
+APP_VERSION = "V1.15"
 APP_TITLE = "SEV | Control de Producción"
+
 
 BASE_DIR = Path(__file__).resolve().parent
 DB_PATH = BASE_DIR / "sev_produccion.db"
+
+# ============================================================
+# PERSISTENCIA V1.15
+# ============================================================
+# La aplicación mantiene SQLite para no modificar toda la lógica
+# existente, pero crea/restaura un backup comprimido en un
+# repositorio GitHub privado.
+#
+# Secrets requeridos en Streamlit:
+# GITHUB_TOKEN = "github_pat_..."
+# GITHUB_REPO = "eakuracz-a11y/sev-control-produccion"
+# GITHUB_BRANCH = "main"                    # opcional
+# GITHUB_DB_BACKUP_PATH = "data/sev_produccion.db.gz"  # opcional
+# ============================================================
+
+GITHUB_TOKEN = str(st.secrets.get("GITHUB_TOKEN", "")).strip()
+GITHUB_REPO = str(
+    st.secrets.get(
+        "GITHUB_REPO",
+        "eakuracz-a11y/sev-control-produccion",
+    )
+).strip()
+GITHUB_BRANCH = str(st.secrets.get("GITHUB_BRANCH", "main")).strip()
+GITHUB_DB_BACKUP_PATH = str(
+    st.secrets.get(
+        "GITHUB_DB_BACKUP_PATH",
+        "data/sev_produccion.db.gz",
+    )
+).strip()
+
+PERSISTENCE_ENABLED = bool(GITHUB_TOKEN and GITHUB_REPO)
+
+def _github_headers():
+    return {
+        "Authorization": f"Bearer {GITHUB_TOKEN}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+
+def _github_contents_url():
+    return (
+        f"https://api.github.com/repos/{GITHUB_REPO}/contents/"
+        f"{GITHUB_DB_BACKUP_PATH}"
+    )
+
+def remote_backup_info():
+    """Devuelve metadata del backup remoto o None si no existe/no está disponible."""
+    if not PERSISTENCE_ENABLED:
+        return None
+    try:
+        r = requests.get(
+            _github_contents_url(),
+            headers=_github_headers(),
+            params={"ref": GITHUB_BRANCH},
+            timeout=20,
+        )
+        if r.status_code == 200:
+            return r.json()
+        return None
+    except Exception:
+        return None
+
+def restore_db_from_github(force=False):
+    """
+    Restaura la base SQLite desde GitHub.
+    - Automáticamente solo cuando DB_PATH no existe o está vacío.
+    - force=True permite recuperación manual desde el módulo Backup.
+    """
+    if not PERSISTENCE_ENABLED:
+        return False, "Persistencia GitHub no configurada."
+
+    if not force and DB_PATH.exists() and DB_PATH.stat().st_size > 0:
+        return False, "La base local ya existe; no se reemplazó."
+
+    try:
+        info = remote_backup_info()
+        if not info:
+            return False, "No existe un backup remoto todavía."
+
+        download_url = info.get("download_url")
+        if not download_url:
+            return False, "GitHub no devolvió URL de descarga del backup."
+
+        r = requests.get(
+            download_url,
+            headers=_github_headers(),
+            timeout=30,
+        )
+        r.raise_for_status()
+
+        raw = gzip.decompress(r.content)
+
+        # Validar en archivo temporal antes de reemplazar.
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
+            tmp.write(raw)
+            tmp_path = Path(tmp.name)
+
+        try:
+            conn = sqlite3.connect(tmp_path)
+            required = {"ordenes", "productos", "familias"}
+            found = {
+                row[0]
+                for row in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                ).fetchall()
+            }
+            conn.close()
+
+            missing = required - found
+            if missing:
+                return False, (
+                    "El backup remoto no parece una base SEV válida. "
+                    f"Faltan tablas: {', '.join(sorted(missing))}"
+                )
+
+            DB_PATH.write_bytes(tmp_path.read_bytes())
+        finally:
+            try:
+                tmp_path.unlink(missing_ok=True)
+            except Exception:
+                pass
+
+        return True, "Base restaurada desde el backup remoto."
+    except Exception as exc:
+        return False, f"No se pudo restaurar el backup: {exc}"
+
+def backup_db_to_github(reason="actualización"):
+    """
+    Comprime y guarda la base en GitHub.
+    El error de backup NUNCA anula una operación de producción ya guardada.
+    """
+    if not PERSISTENCE_ENABLED:
+        return False, "Persistencia GitHub no configurada."
+    if not DB_PATH.exists() or DB_PATH.stat().st_size == 0:
+        return False, "La base local está vacía."
+
+    try:
+        # Cerrar/volcar WAL no es necesario porque la app usa conexiones cortas
+        # y commits explícitos. Se comprime el archivo ya confirmado.
+        compressed = gzip.compress(DB_PATH.read_bytes(), compresslevel=9)
+        encoded = base64.b64encode(compressed).decode("ascii")
+
+        current = remote_backup_info()
+        payload = {
+            "message": f"SEV Producción DB backup · {reason} · "
+                       f"{datetime.now().isoformat(timespec='seconds')}",
+            "content": encoded,
+            "branch": GITHUB_BRANCH,
+        }
+        if current and current.get("sha"):
+            payload["sha"] = current["sha"]
+
+        r = requests.put(
+            _github_contents_url(),
+            headers=_github_headers(),
+            json=payload,
+            timeout=45,
+        )
+
+        if r.status_code not in (200, 201):
+            msg = r.text[:500]
+            return False, f"GitHub respondió {r.status_code}: {msg}"
+
+        st.session_state["last_backup_ok"] = datetime.now().isoformat(
+            timespec="seconds"
+        )
+        st.session_state["last_backup_error"] = ""
+        return True, "Backup persistente actualizado."
+    except Exception as exc:
+        st.session_state["last_backup_error"] = str(exc)
+        return False, f"No se pudo crear backup: {exc}"
+
+def validate_uploaded_sqlite(raw_bytes):
+    """Valida una base SQLite antes de permitir restauración manual."""
+    tmp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
+            tmp.write(raw_bytes)
+            tmp_path = Path(tmp.name)
+
+        conn = sqlite3.connect(tmp_path)
+        tables = {
+            row[0]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+        counts = {}
+        for name in [
+            "ordenes",
+            "familias",
+            "productos",
+            "materias_primas",
+            "formulaciones",
+            "personas",
+        ]:
+            if name in tables:
+                counts[name] = int(
+                    conn.execute(f"SELECT COUNT(*) FROM {name}").fetchone()[0]
+                )
+        conn.close()
+
+        required = {"ordenes", "familias", "productos"}
+        missing = required - tables
+        if missing:
+            return False, counts, (
+                "No es una base SEV válida. Faltan: "
+                + ", ".join(sorted(missing))
+            )
+        return True, counts, "Base SQLite válida."
+    except Exception as exc:
+        return False, {}, f"No se pudo validar la base: {exc}"
+    finally:
+        if tmp_path:
+            try:
+                tmp_path.unlink(missing_ok=True)
+            except Exception:
+                pass
+
+# En cada arranque de un contenedor nuevo, recuperar primero la última copia.
+_restore_ok, _restore_msg = restore_db_from_github(force=False)
 
 DEFAULT_FAMILIES = [
     ("ADJ", "Adyuvantes"),
@@ -1029,9 +1256,18 @@ def execute(query, params=()):
         cur = conn.cursor()
         cur.execute(query, params)
         conn.commit()
-        return cur.lastrowid
+        lastrowid = cur.lastrowid
     finally:
         conn.close()
+
+    # Backup sólo para operaciones que modifican información.
+    normalized = str(query).lstrip().upper()
+    if normalized.startswith(("INSERT", "UPDATE", "DELETE", "REPLACE")):
+        ok, msg = backup_db_to_github(reason="guardado")
+        if not ok and PERSISTENCE_ENABLED:
+            st.session_state["last_backup_error"] = msg
+
+    return lastrowid
 
 
 init_db()
@@ -1654,6 +1890,7 @@ def save_order_admin_changes(order_id, values):
             return False, None, f"No se actualizó la orden. Filas modificadas: {cur.rowcount}"
 
         conn.commit()
+        backup_db_to_github(reason="modificación de orden")
 
         row = conn.execute(
             "SELECT * FROM ordenes WHERE id = ?",
@@ -1782,6 +2019,7 @@ def sync_order_material_reservation(order_id):
                 )
 
         conn.commit()
+        backup_db_to_github(reason="sincronización de stock")
         return True, "Stock teórico sincronizado."
     except Exception as exc:
         conn.rollback()
@@ -1897,7 +2135,7 @@ st.markdown(
     f"""
     <div class="sev-title">
         <h1>🏭 SEV | Control de Producción</h1>
-        <p>{APP_VERSION} · Órdenes internas · Lotes · Fechas · Vencimientos · Producción · Trazabilidad</p>
+        <p>{APP_VERSION} · Órdenes internas · Lotes · Producción · Trazabilidad · Backup persistente</p>
     </div>
     """,
     unsafe_allow_html=True,
@@ -1961,6 +2199,7 @@ with st.sidebar:
         "Consumibles",
         "Formulaciones",
         "Personas y correos",
+        "Backup / recuperación",
     ]
 
     default_module_index = 3 if st.session_state.pop("go_orders", False) else 0
@@ -5771,6 +6010,160 @@ elif section == "Personas y correos":
         st.caption(
             "Sólo un Administrador puede agregar personas o modificar correos."
         )
+
+
+
+# ============================================================
+# BACKUP / RECUPERACIÓN
+# ============================================================
+
+elif section == "Backup / recuperación":
+
+    st.subheader("Backup persistente y recuperación")
+
+    if PERSISTENCE_ENABLED:
+        st.success(
+            "Persistencia remota configurada. "
+            "La base se restaura automáticamente cuando Streamlit inicia "
+            "un contenedor nuevo."
+        )
+    else:
+        st.error(
+            "Persistencia remota todavía NO configurada. "
+            "Agregá GITHUB_TOKEN en Secrets antes de volver a cargar información."
+        )
+
+    c1, c2, c3 = st.columns(3)
+
+    orders_now = fetch_df("SELECT COUNT(*) AS n FROM ordenes")
+    order_count = int(orders_now.iloc[0]["n"]) if not orders_now.empty else 0
+
+    with c1:
+        st.metric("Órdenes en base actual", order_count)
+
+    with c2:
+        size_mb = DB_PATH.stat().st_size / 1024 / 1024 if DB_PATH.exists() else 0
+        st.metric("Tamaño base", f"{size_mb:.2f} MB")
+
+    with c3:
+        last_ok = st.session_state.get("last_backup_ok", "—")
+        st.metric("Último backup de sesión", last_ok)
+
+    st.divider()
+    st.markdown("### Crear copia ahora")
+
+    if st.button(
+        "☁️ Guardar backup persistente ahora",
+        type="primary",
+        use_container_width=True,
+    ):
+        ok, msg = backup_db_to_github(reason="backup manual")
+        if ok:
+            st.success(msg)
+        else:
+            st.error(msg)
+
+    if DB_PATH.exists():
+        st.download_button(
+            "⬇️ Descargar sev_produccion.db",
+            data=DB_PATH.read_bytes(),
+            file_name=(
+                "sev_produccion_"
+                + datetime.now().strftime("%Y%m%d_%H%M")
+                + ".db"
+            ),
+            mime="application/octet-stream",
+            use_container_width=True,
+        )
+
+    st.divider()
+    st.markdown("### Recuperar desde GitHub")
+
+    st.caption(
+        "Este botón reemplaza la base local por la última copia remota. "
+        "Úsalo si el tablero aparece vacío después de un reinicio."
+    )
+
+    if st.button(
+        "♻️ Restaurar última copia remota",
+        use_container_width=True,
+    ):
+        ok, msg = restore_db_from_github(force=True)
+        if ok:
+            st.success(msg)
+            st.rerun()
+        else:
+            st.error(msg)
+
+    st.divider()
+    st.markdown("### Recuperar una base SQLite anterior")
+
+    uploaded_db = st.file_uploader(
+        "Subir archivo sev_produccion.db",
+        type=["db", "sqlite", "sqlite3"],
+        key="restore_old_db",
+    )
+
+    if uploaded_db is not None:
+        raw = uploaded_db.getvalue()
+        valid, counts, msg = validate_uploaded_sqlite(raw)
+
+        if valid:
+            st.success(msg)
+            st.write("Contenido detectado:")
+            st.json(counts)
+
+            confirm_restore = st.checkbox(
+                "Confirmo que quiero reemplazar la base actual por este archivo.",
+                key="confirm_restore_db",
+            )
+
+            if st.button(
+                "Restaurar archivo cargado",
+                disabled=not confirm_restore,
+                type="primary",
+                use_container_width=True,
+            ):
+                # Crear copia de seguridad de la base actual antes de reemplazar.
+                if DB_PATH.exists():
+                    backup_db_to_github(reason="antes de restauración manual")
+
+                DB_PATH.write_bytes(raw)
+
+                # Guardar inmediatamente la base restaurada en remoto.
+                ok_remote, msg_remote = backup_db_to_github(
+                    reason="restauración manual"
+                )
+                st.success("Base restaurada correctamente.")
+                if ok_remote:
+                    st.success("La copia restaurada quedó guardada en GitHub.")
+                else:
+                    st.warning(msg_remote)
+                st.rerun()
+        else:
+            st.error(msg)
+
+    st.divider()
+    st.markdown("### Estado técnico")
+
+    st.write(
+        {
+            "Repositorio backup": GITHUB_REPO if GITHUB_REPO else "No configurado",
+            "Rama": GITHUB_BRANCH,
+            "Archivo remoto": GITHUB_DB_BACKUP_PATH,
+            "Persistencia activa": PERSISTENCE_ENABLED,
+            "Error último backup": st.session_state.get(
+                "last_backup_error",
+                "",
+            ),
+        }
+    )
+
+    st.info(
+        "La V1.15 mantiene SQLite para conservar todas las funciones actuales, "
+        "pero sincroniza la base comprimida con el repositorio privado. "
+        "Así un nuevo deploy o reinicio puede restaurar automáticamente los datos."
+    )
 
 
 # ============================================================
